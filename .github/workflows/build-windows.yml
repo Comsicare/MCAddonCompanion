@@ -31,66 +31,31 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
         shell: pwsh
 
-      - name: Upload installer to GitHub Release
+      - name: Create GitHub Release and upload installer
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
-          REPO: ${{ github.repository }}
         run: |
-          API="https://api.github.com/repos/${REPO}"
-
-          # Build release notes from the tagged commit message (body lines after subject)
-          COMMIT_MSG=$(git log -1 --format="%B" "${{ github.sha }}")
-          SUBJECT=$(echo "$COMMIT_MSG" | head -1)
-          BODY=$(echo "$COMMIT_MSG" | tail -n +3)
-          NOTES="${SUBJECT}"
-          if [ -n "$BODY" ]; then
-            NOTES="${SUBJECT}
-
-${BODY}"
+          # Determine prerelease flag
+          PRERELEASE_FLAG="--prerelease"
+          if echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            PRERELEASE_FLAG=""
           fi
 
-          # Check if release already exists (GitLab may have created it)
-          EXISTING=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "${API}/releases/tags/${TAG}")
-          UPLOAD_URL=$(echo "$EXISTING" | python -c \
-            "import sys,json; d=json.load(sys.stdin); print(d.get('upload_url',''))" 2>/dev/null \
-            | sed 's/{?name,label}//')
+          # Write commit notes to file to avoid quoting issues
+          git log -1 --format="%B" > release_notes.txt
 
-          if [ -z "$UPLOAD_URL" ]; then
-            echo "Release not found, creating it..."
-            PRERELEASE=true
-            if echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-              PRERELEASE=false
-            fi
-            PAYLOAD=$(python -c "
-import json, sys
-notes = sys.argv[1]
-tag = sys.argv[2]
-pre = sys.argv[3]
-print(json.dumps({'tag_name': tag, 'name': tag, 'body': notes, 'prerelease': pre == 'true'}))
-" "$NOTES" "$TAG" "$PRERELEASE")
-            RELEASE=$(curl -sf -X POST \
-              -H "Authorization: token ${GH_TOKEN}" \
-              -H "Content-Type: application/json" \
-              -d "$PAYLOAD" \
-              "${API}/releases")
-            UPLOAD_URL=$(echo "$RELEASE" | python -c \
-              "import sys,json; d=json.load(sys.stdin); print(d.get('upload_url',''))" 2>/dev/null \
-              | sed 's/{?name,label}//')
+          # Create release if it doesn't exist, then upload asset
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release already exists, uploading asset..."
+            gh release upload "$TAG" Output/MCAddonCompanion-Setup.exe --clobber
+          else
+            echo "Creating release..."
+            gh release create "$TAG" \
+              Output/MCAddonCompanion-Setup.exe \
+              --title "$TAG" \
+              --notes-file release_notes.txt \
+              $PRERELEASE_FLAG
           fi
-
-          if [ -z "$UPLOAD_URL" ]; then
-            echo "ERROR: Could not get or create release"
-            exit 1
-          fi
-
-          echo "Uploading installer..."
-          curl -sf -X POST \
-            -H "Authorization: token ${GH_TOKEN}" \
-            -H "Content-Type: application/octet-stream" \
-            --data-binary @Output/MCAddonCompanion-Setup.exe \
-            "${UPLOAD_URL}?name=MCAddonCompanion-Setup.exe"
-          echo "Upload complete"
+          echo "Done"
