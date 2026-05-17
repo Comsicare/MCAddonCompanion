@@ -262,10 +262,11 @@ def _install_windows(installer_path: Path) -> None:
         f":wait\r\n"
         f"tasklist /FI \"PID eq {pid}\" 2>nul | find \"{pid}\" >nul\r\n"
         f"if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto wait)\r\n"
-        f"timeout /t 6 /nobreak >nul\r\n"
-        f"\"{installer_path}\" /VERYSILENT /NORESTART /FORCECLOSEAPPLICATIONS\r\n"
+        f"timeout /t 2 /nobreak >nul\r\n"
+        f"start /wait \"\" \"{installer_path}\" /VERYSILENT /NORESTART /FORCECLOSEAPPLICATIONS\r\n"
         f"timeout /t 2 /nobreak >nul\r\n"
         f"if exist \"{exe}\" start \"\" \"{exe}\"\r\n"
+        f"del \"{installer_path}\"\r\n"
     )
     bat = tempfile.NamedTemporaryFile(suffix=".bat", delete=False, mode="w")
     bat.write(script)
