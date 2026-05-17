@@ -257,20 +257,33 @@ def _install_windows(installer_path: Path) -> None:
     exe = install_dir / "MCAddonCompanion.exe"
     pid = os.getpid()
 
+    log_path = install_dir / "update_install.log"
     script = (
         f"@echo off\r\n"
+        f"echo [%time%] Starting update script > \"{log_path}\"\r\n"
         f":wait\r\n"
         f"tasklist /FI \"PID eq {pid}\" 2>nul | find \"{pid}\" >nul\r\n"
         f"if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto wait)\r\n"
+        f"echo [%time%] Old process gone, waiting 2s >> \"{log_path}\"\r\n"
         f"timeout /t 2 /nobreak >nul\r\n"
+        f"echo [%time%] Running installer: \"{installer_path}\" >> \"{log_path}\"\r\n"
+        f"if not exist \"{installer_path}\" echo [%time%] ERROR installer not found >> \"{log_path}\" & goto :end\r\n"
         f"start /wait \"\" \"{installer_path}\" /VERYSILENT /NORESTART /FORCECLOSEAPPLICATIONS\r\n"
+        f"echo [%time%] Installer exit code: %errorlevel% >> \"{log_path}\"\r\n"
         f"timeout /t 2 /nobreak >nul\r\n"
-        f"if exist \"{exe}\" start \"\" \"{exe}\"\r\n"
-        f"del \"{installer_path}\"\r\n"
+        f"if exist \"{exe}\" (\r\n"
+        f"  echo [%time%] Launching {exe} >> \"{log_path}\"\r\n"
+        f"  start \"\" \"{exe}\"\r\n"
+        f") else (\r\n"
+        f"  echo [%time%] ERROR exe not found after install >> \"{log_path}\"\r\n"
+        f")\r\n"
+        f":end\r\n"
+        f"del \"{installer_path}\" 2>nul\r\n"
     )
     bat = tempfile.NamedTemporaryFile(suffix=".bat", delete=False, mode="w")
     bat.write(script)
     bat.close()
+    log.info("Update installer script written to %s, log will be at %s", bat.name, log_path)
     subprocess.Popen(
         ["cmd", "/c", bat.name],
         creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
