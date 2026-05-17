@@ -27,8 +27,20 @@ export default {
       try {
         await window.__apiReady
         installedInstances.value = await window.pywebview.api.get_installed_instances()
-      } catch(e) { installedInstances.value = [] }
+      } catch(e) {
+        installedInstances.value = []
+      }
       instancesLoading.value = false
+      // Fetch update status in background — never blocks or resets the table
+      try {
+        const updates = await window.pywebview.api.get_instance_update_status()
+        const map = {}
+        updates.forEach(u => { map[u.instance_name] = u })
+        installedInstances.value = installedInstances.value.map(inst => ({
+          ...inst,
+          ...(map[inst.instance_name] || {}),
+        }))
+      } catch(e) {}
     }
 
     const untrackInstance = async (instName) => {
@@ -1067,8 +1079,8 @@ export default {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="inst in installedInstances" :key="inst.instance_name"
-                  :style="!inst.prism_exists ? 'opacity:0.6' : ''">
+                <template v-for="inst in installedInstances" :key="inst.instance_name">
+                <tr :style="!inst.prism_exists ? 'opacity:0.6' : ''">
                   <td>
                     <div class="fw-500 text-0">{{ inst.instance_name }}</div>
                     <div v-if="!inst.prism_exists" class="fs-11 text-3" style="color:var(--err);margin-top:2px">Not found in Prism</div>
@@ -1107,7 +1119,7 @@ export default {
                   </td>
                 </tr>
                 <!-- Per-instance progress row -->
-                <tr v-if="instanceProgress[inst.instance_name]" :key="inst.instance_name + '_progress'">
+                <tr v-if="instanceProgress[inst.instance_name]">
                   <td colspan="7" style="padding:0 16px 12px;background:var(--bg-0)">
                     <div style="display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:var(--bg-1)">
                       <div v-for="(s, i) in instanceProgress[inst.instance_name].steps" :key="i"
@@ -1130,6 +1142,7 @@ export default {
                     </div>
                   </td>
                 </tr>
+                </template>
               </tbody>
             </table>
           </div>

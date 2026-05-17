@@ -932,34 +932,55 @@ class Api:
         remove_tracked_pack(instance_name)
 
     def get_installed_instances(self) -> list:
+        """Return local state immediately — no network calls. Use get_instance_update_status for update info."""
         from core.state import get_installed_instances, get_tracked_packs
-        from core.gitlab import GitLabClient
         installed = get_installed_instances()
         tracked_map = {t["instance_name"]: t for t in get_tracked_packs()}
         result = []
         for entry in installed:
             repo = get_repo_by_id(entry["repo_id"])
             tracked = tracked_map.get(entry["instance_name"])
-            has_update = False
-            latest = None
-            if repo:  # check updates for all installed instances, not just tracked
-                try:
-                    client = GitLabClient(repo["base_url"], repo["project_id"],
-                                         repo.get("upload_token"), repo.get("read_token"))
-                    latest = client.get_latest_version(entry["pack_slug"])
-                    has_update = bool(latest and latest != entry["installed_version"])
-                except Exception:
-                    pass
             prism_exists = (INSTANCES_DIR / entry["instance_name"]).is_dir()
             hook_enabled = self.get_hook_status(entry["instance_name"])
             result.append({
                 **entry,
                 "repo_name": repo["name"] if repo else None,
                 "tracked": tracked is not None,
-                "has_update": has_update,
-                "latest_version": latest,
+                "has_update": False,
+                "latest_version": None,
                 "prism_exists": prism_exists,
                 "hook_enabled": hook_enabled,
+            })
+        return result
+
+    def get_instance_update_status(self) -> list:
+        """Check GitLab for latest versions. Called async after initial render. Returns [{instance_name, has_update, latest_version}]."""
+        from core.state import get_installed_instances
+        from core.gitlab import GitLabClient
+        installed = get_installed_instances()
+        # Deduplicate by (repo_id, pack_slug) to minimise API calls
+        seen: dict[tuple, str] = {}
+        for entry in installed:
+            key = (entry["repo_id"], entry["pack_slug"])
+            if key not in seen:
+                repo = get_repo_by_id(entry["repo_id"])
+                if repo:
+                    try:
+                        client = GitLabClient(repo["base_url"], repo["project_id"],
+                                             repo.get("upload_token"), repo.get("read_token"))
+                        seen[key] = client.get_latest_version(entry["pack_slug"]) or ""
+                    except Exception:
+                        seen[key] = ""
+                else:
+                    seen[key] = ""
+        result = []
+        for entry in installed:
+            key = (entry["repo_id"], entry["pack_slug"])
+            latest = seen.get(key, "")
+            result.append({
+                "instance_name": entry["instance_name"],
+                "has_update": bool(latest and latest != entry["installed_version"]),
+                "latest_version": latest or None,
             })
         return result
 
