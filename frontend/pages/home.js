@@ -122,7 +122,7 @@ export default {
                   <span>Last sync</span>
                   <span class="mono text-1">—</span>
                 </div>
-                <button class="btn btn-primary btn-sm flex items-center gap-6">
+<button class="btn btn-primary btn-sm flex items-center gap-6" @click="$emit('navigate','schematic_sync')">
                   <span v-html="icon('refresh',12)"></span> Sync now
                 </button>
               </div>

@@ -86,19 +86,38 @@ export default {
     }
 
     // ── Archive / Restore ────────────────────────────────────────────────────
-    const archiving = ref(null)        // instance name being archived
-    const archiveError = ref(null)
+    const archiveQueue = ref([])       // names queued or in progress
+    const archivingNow = ref(null)     // name currently being archived
+    const archiveResults = ref({})     // {name: {ok, error}} — shown as inline status
+    let _archiveRunning = false
 
-    const archiveInstance = async (instName) => {
-      archiving.value = instName
-      archiveError.value = null
-      try {
-        await window.__apiReady
-        const result = await window.pywebview.api.archive_instance(instName)
-        if (!result.ok) { archiveError.value = result.error; archiving.value = null; return }
-        await load()
-      } catch(e) { archiveError.value = String(e) }
-      archiving.value = null
+    const _processArchiveQueue = async () => {
+      if (_archiveRunning) return
+      _archiveRunning = true
+      while (archiveQueue.value.length) {
+        const instName = archiveQueue.value[0]
+        archivingNow.value = instName
+        try {
+          await window.__apiReady
+          const result = await window.pywebview.api.archive_instance(instName)
+          archiveResults.value[instName] = result.ok
+            ? { ok: true, msg: 'Archived successfully' }
+            : { ok: false, msg: result.error || 'Archive failed' }
+          if (result.ok) await load()
+        } catch(e) {
+          archiveResults.value[instName] = { ok: false, msg: String(e) }
+        }
+        archiveQueue.value.shift()
+        archivingNow.value = null
+      }
+      _archiveRunning = false
+    }
+
+    const archiveInstance = (instName) => {
+      if (archiveQueue.value.includes(instName)) return
+      delete archiveResults.value[instName]
+      archiveQueue.value.push(instName)
+      _processArchiveQueue()
     }
 
     const showRestoreModal = ref(false)
@@ -146,7 +165,7 @@ export default {
     return {
       data, loading, error, query, filtered, icon, abbr, load, toggleDefault, toggleOverride,
       showSetup, setupForm, setupSaving, setupError, openSetup, saveSetup,
-      archiving, archiveError, archiveInstance,
+      archiveQueue, archivingNow, archiveResults, archiveInstance,
       showRestoreModal, archivedList, selectedArchive, restoring, restoreResult,
       openRestoreModal, doRestore, deleteZip, closeRestoreModal,
     }
@@ -235,6 +254,14 @@ export default {
               </div>
             </div>
           </div>
+          <!-- Archive queue banner -->
+          <div v-if="archiveQueue.length" style="padding:10px 16px;background:var(--accent-soft);border-bottom:1px solid var(--accent-line);display:flex;align-items:center;gap:10px">
+            <span :class="'spin'" v-html="icon('spin',13)" style="color:var(--accent)"></span>
+            <span class="fs-13" style="color:var(--accent)">
+              <strong>{{ archivingNow }}</strong> archiving…
+              <span v-if="archiveQueue.length > 1" class="text-2"> · {{ archiveQueue.length - 1 }} more queued</span>
+            </span>
+          </div>
           <div style="overflow-x:auto">
             <table class="data-table">
               <thead>
@@ -277,14 +304,27 @@ export default {
                   <td><span class="mono fs-12 text-2">—</span></td>
                   <td style="text-align:right"><span class="mono fs-12 text-2">—</span></td>
                   <td style="text-align:right">
-                    <div class="flex items-center gap-4" style="justify-content:flex-end">
+                    <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
+                      <!-- Inline archive result -->
+                      <span v-if="archiveResults[inst.name]"
+                        :style="archiveResults[inst.name].ok ? 'color:var(--ok)' : 'color:var(--err)'"
+                        class="fs-11">
+                        {{ archiveResults[inst.name].msg }}
+                        <button @click="delete archiveResults[inst.name]"
+                          style="background:none;border:none;cursor:pointer;color:inherit;margin-left:4px;opacity:.7">✕</button>
+                      </span>
+                      <!-- Queue position badge -->
+                      <span v-if="archiveQueue.includes(inst.name) && archivingNow !== inst.name"
+                        class="tag text-3 fs-11">
+                        #{{ archiveQueue.indexOf(inst.name) + 1 }} queued
+                      </span>
                       <button class="btn btn-ghost btn-sm flex items-center gap-4"
                         style="font-size:11px;color:var(--text-2)"
-                        :disabled="archiving === inst.name"
+                        :disabled="archiveQueue.includes(inst.name)"
                         @click="archiveInstance(inst.name)"
                         title="Sync, zip, and remove from Prism">
-                        <span :class="archiving === inst.name ? 'spin' : ''" v-html="icon('archive',12)"></span>
-                        {{ archiving === inst.name ? 'Archiving…' : 'Archive' }}
+                        <span :class="archivingNow === inst.name ? 'spin' : ''" v-html="icon('archive',12)"></span>
+                        {{ archivingNow === inst.name ? 'Archiving…' : 'Archive' }}
                       </button>
                     </div>
                   </td>
@@ -297,12 +337,6 @@ export default {
           </div>
         </div>
       </template>
-
-      <!-- Archive error toast -->
-      <div v-if="archiveError" style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--err);color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;z-index:8000">
-        {{ archiveError }}
-        <button @click="archiveError = null" style="margin-left:12px;background:none;border:none;color:#fff;cursor:pointer">✕</button>
-      </div>
 
       <!-- Restore modal -->
       <teleport to="body">

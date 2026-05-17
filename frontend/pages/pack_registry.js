@@ -11,6 +11,16 @@ export default {
     // ── Instances tab ────────────────────────────────────────────────────────
     const installedInstances = ref([])
     const instancesLoading = ref(false)
+    // Per-instance progress: { [instance_name]: {steps, summary, active} }
+    const instanceProgress = ref({})
+
+    const _initInstProgress = (instName) => {
+      instanceProgress.value[instName] = {
+        steps: INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' })),
+        summary: null,
+        active: true,
+      }
+    }
 
     const loadInstalledInstances = async () => {
       instancesLoading.value = true
@@ -49,9 +59,7 @@ export default {
     const reinstallInstance = async (inst) => {
       try {
         await window.__apiReady
-        const conflicts = await window.pywebview.api.check_conflicts(
-          inst.repo_id, inst.pack_name, inst.installed_version, inst.instance_name
-        )
+        _initInstProgress(inst.instance_name)
         const params = {
           repo_id: inst.repo_id,
           pack_name: inst.pack_name,
@@ -60,12 +68,11 @@ export default {
           mode: 'new',
           track: inst.tracked,
         }
-        installing.value = true
-        installSteps.value = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
-        installSummary.value = null
         await window.pywebview.api.install_pack({ ...params, skip_files: [] })
-        tab.value = 'browse'
-      } catch(e) {}
+      } catch(e) {
+        if (instanceProgress.value[inst.instance_name])
+          instanceProgress.value[inst.instance_name].summary = { tone: 'error', text: String(e) }
+      }
     }
 
     const installUpdate = async (inst) => {
@@ -90,14 +97,13 @@ export default {
           conflictInstallParams.value = params
           showConflictModal.value = true
         } else {
-          installing.value = true
-          installSteps.value = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
-          installSummary.value = null
+          _initInstProgress(inst.instance_name)
           await window.pywebview.api.install_pack({ ...params, skip_files: [] })
-          // switch to browse tab so user can see progress
-          tab.value = 'browse'
         }
-      } catch(e) {}
+      } catch(e) {
+        if (instanceProgress.value[inst.instance_name])
+          instanceProgress.value[inst.instance_name].summary = { tone: 'error', text: String(e) }
+      }
     }
     const icon = (name, size = 16) => window.__icon(name, size)
 
@@ -505,6 +511,30 @@ export default {
     const _baseHandler = window.__onProgress
     window.__onProgress = (event) => {
       if (_baseHandler) _baseHandler(event)
+
+      // Route to per-instance progress when on instances tab and an instance op is active
+      if (tab.value === 'instances') {
+        const activeInst = Object.keys(instanceProgress.value).find(k => instanceProgress.value[k].active)
+        if (activeInst) {
+          const ip = instanceProgress.value[activeInst]
+          if (event.type === 'reset') {
+            ip.steps = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
+            ip.summary = null
+          } else if (event.type === 'step') {
+            if (ip.steps[event.step]) {
+              ip.steps[event.step].state = event.state === 'ok' ? 'done' : event.state === 'error' ? 'err' : 'run'
+              ip.steps[event.step].detail = event.detail || ''
+            }
+          } else if (event.type === 'summary') {
+            ip.summary = event
+            ip.active = false
+            // Refresh the list after a successful install
+            if (event.tone === 'ok') loadInstalledInstances()
+          }
+          return
+        }
+      }
+
       const steps = tab.value === 'browse' ? installSteps : publishSteps
       const setSummary = tab.value === 'browse'
         ? (e) => { installSummary.value = e; installing.value = false }
@@ -551,8 +581,8 @@ export default {
       installing, installPack, selectPack, selectVersion, checkAndInstall, modDiff,
       stepIconState, packAbbr, packColor, PUBLISH_STEPS,
       // instances tab
-      installedInstances, instancesLoading, loadInstalledInstances, untrackInstance, installUpdate,
-      removeInstalledRecord, reinstallInstance, toggleHook,
+      installedInstances, instancesLoading, instanceProgress, loadInstalledInstances,
+      untrackInstance, installUpdate, removeInstalledRecord, reinstallInstance, toggleHook,
     }
   },
   template: `
@@ -1073,6 +1103,30 @@ export default {
                         <span v-else class="tag text-3 fs-11">up to date</span>
                         <button v-if="inst.tracked" class="btn btn-ghost btn-sm" style="font-size:11px" @click="untrackInstance(inst.instance_name)">Untrack</button>
                       </template>
+                    </div>
+                  </td>
+                </tr>
+                <!-- Per-instance progress row -->
+                <tr v-if="instanceProgress[inst.instance_name]" :key="inst.instance_name + '_progress'">
+                  <td colspan="7" style="padding:0 16px 12px;background:var(--bg-0)">
+                    <div style="display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:var(--bg-1)">
+                      <div v-for="(s, i) in instanceProgress[inst.instance_name].steps" :key="i"
+                        style="display:flex;align-items:center;gap:8px">
+                        <span class="progress-step-icon" :class="s.state">
+                          <span v-if="s.state==='done'" v-html="icon('check',10)"></span>
+                          <span v-else-if="s.state==='run'" class="spin" v-html="icon('spin',10)"></span>
+                          <span v-else-if="s.state==='err'" v-html="icon('x',10)"></span>
+                        </span>
+                        <span class="fs-12 text-0">{{ s.label }}</span>
+                        <span v-if="s.detail" class="mono fs-11 text-3">{{ s.detail }}</span>
+                      </div>
+                      <div v-if="instanceProgress[inst.instance_name].summary"
+                        style="margin-top:6px;padding:6px 8px;border-radius:4px;font-size:12px;font-weight:500"
+                        :style="instanceProgress[inst.instance_name].summary.tone==='ok' ? 'background:var(--ok-soft);color:var(--ok)' : 'background:var(--err-soft);color:var(--err)'">
+                        {{ instanceProgress[inst.instance_name].summary.text }}
+                        <button @click="delete instanceProgress[inst.instance_name]"
+                          style="margin-left:10px;background:none;border:none;cursor:pointer;color:inherit;font-size:11px;opacity:.7">✕</button>
+                      </div>
                     </div>
                   </td>
                 </tr>
