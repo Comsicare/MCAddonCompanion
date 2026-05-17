@@ -183,10 +183,10 @@ VALID_STREAMS = ("dev", "alpha", "beta", "prerelease", "release")
 
 
 def get_update_stream() -> str:
-    """Return the configured update stream. Defaults to 'release'."""
+    """Return the configured update stream. Defaults to 'alpha' during alpha phase."""
     state = load_state()
-    stream = state.get("update_stream", "release")
-    return stream if stream in VALID_STREAMS else "release"
+    stream = state.get("update_stream", "alpha")
+    return stream if stream in VALID_STREAMS else "alpha"
 
 
 def set_update_stream(stream: str) -> None:
