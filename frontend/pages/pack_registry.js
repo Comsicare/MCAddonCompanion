@@ -223,6 +223,7 @@ export default {
 
     const loadInstances = async () => {
       try {
+        await window.__apiReady
         allInstances.value = await window.pywebview.api.get_all_instances()
         if (allInstances.value.length && !publishForm.value.instance_name) {
           publishForm.value.instance_name = allInstances.value[0]
@@ -713,7 +714,7 @@ export default {
                 <textarea v-model="publishForm.changenotes" placeholder="What changed in this version?" class="input" rows="3" style="resize:vertical;width:100%"></textarea>
               </div>
 
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
                 <div>
                   <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">MC Version</div>
                   <input v-model="publishForm.mc_version" placeholder="1.20.1" class="input input-mono">
@@ -721,6 +722,13 @@ export default {
                 <div>
                   <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Loader</div>
                   <input v-model="publishForm.loader" placeholder="fabric" class="input input-mono">
+                </div>
+                <div>
+                  <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">
+                    Loader Version
+                    <span v-if="!publishForm.loader_version" style="color:var(--err);margin-left:4px" title="Loader version missing — Prism will show red X">!</span>
+                  </div>
+                  <input v-model="publishForm.loader_version" placeholder="auto-filled" class="input input-mono">
                 </div>
               </div>
 
