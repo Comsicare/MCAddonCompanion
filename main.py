@@ -1033,9 +1033,7 @@ class Api:
             install_update(path)
             self._emit({"type": "app_update", "state": "done", "pct": 100})
             import time; time.sleep(1)
-            win = self._win[0] if self._win else None
-            if win:
-                win.destroy()
+            sys.exit(0)
 
         threading.Thread(target=_run, daemon=True).start()
 
