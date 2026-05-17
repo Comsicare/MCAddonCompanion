@@ -38,8 +38,18 @@ jobs:
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
-          # Create release if it doesn't exist yet, then upload installer
           API="https://api.github.com/repos/${REPO}"
+
+          # Build release notes from the tagged commit message (body lines after subject)
+          COMMIT_MSG=$(git log -1 --format="%B" "${{ github.sha }}")
+          SUBJECT=$(echo "$COMMIT_MSG" | head -1)
+          BODY=$(echo "$COMMIT_MSG" | tail -n +3)
+          NOTES="${SUBJECT}"
+          if [ -n "$BODY" ]; then
+            NOTES="${SUBJECT}
+
+${BODY}"
+          fi
 
           # Check if release already exists (GitLab may have created it)
           EXISTING=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
@@ -51,12 +61,17 @@ jobs:
 
           if [ -z "$UPLOAD_URL" ]; then
             echo "Release not found, creating it..."
-            # Determine if prerelease
             PRERELEASE=true
             if echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
               PRERELEASE=false
             fi
-            PAYLOAD="{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"body\":\"Windows build. Linux build added by GitLab CI.\",\"prerelease\":${PRERELEASE}}"
+            PAYLOAD=$(python -c "
+import json, sys
+notes = sys.argv[1]
+tag = sys.argv[2]
+pre = sys.argv[3]
+print(json.dumps({'tag_name': tag, 'name': tag, 'body': notes, 'prerelease': pre == 'true'}))
+" "$NOTES" "$TAG" "$PRERELEASE")
             RELEASE=$(curl -sf -X POST \
               -H "Authorization: token ${GH_TOKEN}" \
               -H "Content-Type: application/json" \
