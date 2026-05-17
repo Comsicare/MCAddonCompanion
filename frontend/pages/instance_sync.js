@@ -1,0 +1,393 @@
+import { ref, onMounted, computed } from '../vue.esm-browser.js'
+
+export default {
+  props: ['progress'],
+  emits: ['navigate'],
+  setup() {
+    const data = ref(null)
+    const loading = ref(true)
+    const error = ref(null)
+    const query = ref('')
+
+    // Setup wizard state
+    const showSetup = ref(false)
+    const setupForm = ref({ instances_path: '', sync_path: '' })
+    const setupSaving = ref(false)
+    const setupError = ref(null)
+
+    const icon = (name, size = 16) => window.__icon(name, size)
+    const abbr = name => name.slice(0, 2).toUpperCase()
+
+    const load = async () => {
+      loading.value = true
+      error.value = null
+      try {
+        await window.__apiReady
+        data.value = await window.pywebview.api.get_instance_sync_data()
+      } catch(e) {
+        error.value = String(e)
+      }
+      loading.value = false
+    }
+
+    const openSetup = () => {
+      setupForm.value = {
+        instances_path: data.value?.instances_path || 'C:\\Users\\comsi\\AppData\\Roaming\\PrismLauncher\\instances',
+        sync_path: data.value?.sync_path || '',
+      }
+      setupError.value = null
+      showSetup.value = true
+    }
+
+    const saveSetup = async () => {
+      if (!setupForm.value.instances_path || !setupForm.value.sync_path) {
+        setupError.value = 'Both paths are required.'
+        return
+      }
+      setupSaving.value = true
+      setupError.value = null
+      try {
+        await window.__apiReady
+        await window.pywebview.api.setup_instance_sync(
+          setupForm.value.instances_path,
+          setupForm.value.sync_path,
+        )
+        showSetup.value = false
+        await load()
+      } catch(e) {
+        setupError.value = String(e)
+      }
+      setupSaving.value = false
+    }
+
+    onMounted(load)
+
+    const filtered = computed(() => {
+      if (!data.value?.instances) return []
+      const q = query.value.toLowerCase()
+      return data.value.instances.filter(i => i.name.toLowerCase().includes(q))
+    })
+
+    const toggleDefault = async (key) => {
+      if (!data.value) return
+      const next = !data.value.defaults[key]
+      try {
+        await window.pywebview.api.set_instance_default(key, next)
+        data.value.defaults[key] = next
+      } catch(e) {}
+    }
+
+    const toggleOverride = async (inst, key) => {
+      const next = !inst[key]
+      try {
+        await window.pywebview.api.set_instance_override(inst.name, key, next)
+        inst[key] = next
+      } catch(e) {}
+    }
+
+    // ── Archive / Restore ────────────────────────────────────────────────────
+    const archiving = ref(null)        // instance name being archived
+    const archiveError = ref(null)
+
+    const archiveInstance = async (instName) => {
+      archiving.value = instName
+      archiveError.value = null
+      try {
+        await window.__apiReady
+        const result = await window.pywebview.api.archive_instance(instName)
+        if (!result.ok) { archiveError.value = result.error; archiving.value = null; return }
+        await load()
+      } catch(e) { archiveError.value = String(e) }
+      archiving.value = null
+    }
+
+    const showRestoreModal = ref(false)
+    const archivedList = ref([])
+    const selectedArchive = ref('')
+    const restoring = ref(false)
+    const restoreResult = ref(null)   // {ok, instance_name, has_zip}
+
+    const openRestoreModal = async () => {
+      restoreResult.value = null
+      selectedArchive.value = ''
+      try {
+        await window.__apiReady
+        archivedList.value = await window.pywebview.api.get_archived_instances()
+      } catch(e) { archivedList.value = [] }
+      showRestoreModal.value = true
+    }
+
+    const doRestore = async () => {
+      if (!selectedArchive.value) return
+      restoring.value = true
+      try {
+        await window.__apiReady
+        const result = await window.pywebview.api.restore_instance(selectedArchive.value)
+        restoreResult.value = { ...result, instance_name: selectedArchive.value }
+        if (result.ok) await load()
+      } catch(e) { restoreResult.value = { ok: false, error: String(e) } }
+      restoring.value = false
+    }
+
+    const deleteZip = async () => {
+      if (!restoreResult.value) return
+      try {
+        await window.__apiReady
+        await window.pywebview.api.delete_archive_zip(restoreResult.value.instance_name)
+      } catch(e) {}
+      restoreResult.value = { ...restoreResult.value, has_zip: false }
+    }
+
+    const closeRestoreModal = () => {
+      showRestoreModal.value = false
+      restoreResult.value = null
+    }
+
+    return {
+      data, loading, error, query, filtered, icon, abbr, load, toggleDefault, toggleOverride,
+      showSetup, setupForm, setupSaving, setupError, openSetup, saveSetup,
+      archiving, archiveError, archiveInstance,
+      showRestoreModal, archivedList, selectedArchive, restoring, restoreResult,
+      openRestoreModal, doRestore, deleteZip, closeRestoreModal,
+    }
+  },
+  template: `
+    <main class="page-wrap">
+      <div class="page-header">
+        <div>
+          <div class="kicker">Sync</div>
+          <h1>Instance Sync</h1>
+        </div>
+        <div class="flex items-center gap-10">
+          <button class="btn btn-ghost btn-sm flex items-center gap-6" @click="openRestoreModal">
+            <span v-html="icon('archive', 12)"></span> Archived
+          </button>
+          <button class="btn btn-ghost btn-sm flex items-center gap-6" @click="load">
+            <span v-html="icon('refresh', 12)"></span> Refresh
+          </button>
+        </div>
+      </div>
+
+      <div v-if="loading" class="loading">Loading…</div>
+      <div v-else-if="error" class="loading text-err">Error: {{ error }}</div>
+
+      <template v-else-if="!data.is_configured">
+        <div class="card">
+          <div class="card-body" style="text-align:center;padding:56px 48px;display:flex;flex-direction:column;align-items:center;gap:16px">
+            <div class="fw-500 text-0 fs-14">Instance sync is not configured.</div>
+            <div class="text-3 fs-13">Set the Prism instances folder and a sync folder to enable launch/exit hooks.</div>
+            <button class="btn btn-primary btn-sm" @click="openSetup">Setup Instance Sync</button>
+          </div>
+        </div>
+      </template>
+
+      <template v-else>
+        <!-- Global Defaults card -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="kicker">Global</div>
+              <div class="card-title">Global Defaults</div>
+            </div>
+          </div>
+          <div class="card-body" style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px">
+            <!-- Exit sync toggle -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--bg-0);border:1px solid var(--line);border-radius:8px">
+              <div>
+                <div class="fw-500 text-0 fs-13">Exit Sync</div>
+                <div class="fs-12 text-2 mt-4">Copy instance on exit</div>
+              </div>
+              <div :class="['toggle-track', data.defaults.exit_sync ? 'on' : 'off']" @click="toggleDefault('exit_sync')">
+                <div class="toggle-thumb"></div>
+              </div>
+            </div>
+            <!-- Startup sync toggle -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--bg-0);border:1px solid var(--line);border-radius:8px">
+              <div>
+                <div class="fw-500 text-0 fs-13">Startup Sync</div>
+                <div class="fs-12 text-2 mt-4">Restore instance on launch</div>
+              </div>
+              <div :class="['toggle-track', data.defaults.startup_sync ? 'on' : 'off']" @click="toggleDefault('startup_sync')">
+                <div class="toggle-thumb"></div>
+              </div>
+            </div>
+            <!-- Sync path -->
+            <div style="padding:12px 14px;background:var(--bg-0);border:1px solid var(--line);border-radius:8px">
+              <div class="fw-500 text-0 fs-13">Sync Path</div>
+              <div class="mono fs-12 text-2 mt-4 text-ellipsis" style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis" :title="data.sync_path">
+                {{ data.sync_path || '—' }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Instance table -->
+        <div class="card">
+          <div class="card-header" style="align-items:center">
+            <div>
+              <div class="kicker">Instances</div>
+              <div class="card-title">Instance List <span class="text-3 fw-500">· {{ data.instances.length }}</span></div>
+            </div>
+            <div class="flex items-center gap-8">
+              <div class="relative">
+                <span style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--text-3);display:inline-flex" v-html="icon('search',13)"></span>
+                <input v-model="query" placeholder="Filter instances…" class="input input-search" style="width:220px;padding:6px 10px 6px 28px">
+              </div>
+            </div>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="text-align:left">Instance</th>
+                  <th style="text-align:center">Exit Sync</th>
+                  <th style="text-align:center">Startup Sync</th>
+                  <th style="text-align:left">Last Exit Sync</th>
+                  <th style="text-align:left">Last Startup Sync</th>
+                  <th style="text-align:right">Size</th>
+                  <th style="text-align:right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="inst in filtered" :key="inst.name">
+                  <td>
+                    <div class="flex items-center gap-10">
+                      <div class="inst-avatar">{{ abbr(inst.name) }}</div>
+                      <div>
+                        <div class="text-0 fw-500">{{ inst.name }}</div>
+                        <div class="mono fs-12 text-3 mt-4">Prism · —</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td style="text-align:center">
+                    <div style="display:flex;justify-content:center">
+                      <div :class="['toggle-track', inst.exit_sync ? 'on' : 'off']" @click="toggleOverride(inst, 'exit_sync')">
+                        <div class="toggle-thumb"></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td style="text-align:center">
+                    <div style="display:flex;justify-content:center">
+                      <div :class="['toggle-track', inst.startup_sync ? 'on' : 'off']" @click="toggleOverride(inst, 'startup_sync')">
+                        <div class="toggle-thumb"></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span class="mono fs-12 text-2">—</span></td>
+                  <td><span class="mono fs-12 text-2">—</span></td>
+                  <td style="text-align:right"><span class="mono fs-12 text-2">—</span></td>
+                  <td style="text-align:right">
+                    <div class="flex items-center gap-4" style="justify-content:flex-end">
+                      <button class="btn btn-ghost btn-sm flex items-center gap-4"
+                        style="font-size:11px;color:var(--text-2)"
+                        :disabled="archiving === inst.name"
+                        @click="archiveInstance(inst.name)"
+                        title="Sync, zip, and remove from Prism">
+                        <span :class="archiving === inst.name ? 'spin' : ''" v-html="icon('archive',12)"></span>
+                        {{ archiving === inst.name ? 'Archiving…' : 'Archive' }}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="!filtered.length">
+                  <td colspan="7" class="loading">No instances found</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
+
+      <!-- Archive error toast -->
+      <div v-if="archiveError" style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--err);color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;z-index:8000">
+        {{ archiveError }}
+        <button @click="archiveError = null" style="margin-left:12px;background:none;border:none;color:#fff;cursor:pointer">✕</button>
+      </div>
+
+      <!-- Restore modal -->
+      <teleport to="body">
+        <div v-if="showRestoreModal"
+          style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px">
+          <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:480px;overflow:hidden">
+            <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line)">
+              <div class="fw-600 text-0 fs-13">Restore Archived Instance</div>
+            </div>
+            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+              <template v-if="!restoreResult">
+                <div v-if="!archivedList.length" class="fs-13 text-3">No archived instances found.</div>
+                <template v-else>
+                  <div>
+                    <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Select instance to restore</div>
+                    <select v-model="selectedArchive" class="input">
+                      <option value="" disabled>Choose…</option>
+                      <option v-for="name in archivedList" :key="name" :value="name">{{ name }}</option>
+                    </select>
+                  </div>
+                </template>
+              </template>
+              <template v-else-if="restoreResult.ok">
+                <div style="display:flex;align-items:center;gap:10px;color:var(--ok)">
+                  <span v-html="icon('check', 16)"></span>
+                  <span class="fw-500 fs-13">Restored successfully.</span>
+                </div>
+                <div v-if="restoreResult.has_zip" class="fs-13 text-1">
+                  A backup zip still exists. Delete it?
+                </div>
+              </template>
+              <template v-else>
+                <div class="fs-13 text-err">{{ restoreResult.error }}</div>
+              </template>
+            </div>
+            <div style="padding:16px 24px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px">
+              <template v-if="!restoreResult">
+                <button class="btn btn-ghost btn-sm" @click="closeRestoreModal">Cancel</button>
+                <button class="btn btn-primary btn-sm" :disabled="restoring || !selectedArchive" @click="doRestore">
+                  {{ restoring ? 'Restoring…' : 'Restore' }}
+                </button>
+              </template>
+              <template v-else-if="restoreResult.ok">
+                <button v-if="restoreResult.has_zip" class="btn btn-ghost btn-sm" style="color:var(--err);border-color:var(--err)" @click="deleteZip">Yes, delete zip</button>
+                <button class="btn btn-primary btn-sm" @click="closeRestoreModal">{{ restoreResult.has_zip ? 'No, keep it' : 'Close' }}</button>
+              </template>
+              <template v-else>
+                <button class="btn btn-ghost btn-sm" @click="closeRestoreModal">Close</button>
+              </template>
+            </div>
+          </div>
+        </div>
+      </teleport>
+
+      <!-- Setup wizard modal — outside v-if/v-else chain so it doesn't break Vue's sibling check -->
+      <teleport to="body">
+        <div v-if="showSetup"
+          style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px">
+          <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:520px;overflow:hidden">
+            <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line)">
+              <div class="fw-600 text-0 fs-13">Setup Instance Sync</div>
+              <div class="fs-13 text-2 mt-4">Set the paths for Prism instances and the sync folder.</div>
+            </div>
+            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+              <div>
+                <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Prism Instances Path</div>
+                <input v-model="setupForm.instances_path" class="input input-mono" placeholder="C:\Users\…\PrismLauncher\instances">
+                <div class="fs-12 text-3 mt-4">Folder containing all Prism instance subfolders.</div>
+              </div>
+              <div>
+                <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Sync Folder Path</div>
+                <input v-model="setupForm.sync_path" class="input input-mono" placeholder="C:\Users\…\Nextcloud\Minecraft">
+                <div class="fs-12 text-3 mt-4">Folder where instance files will be synced (e.g. Nextcloud).</div>
+              </div>
+              <div v-if="setupError" style="padding:8px 12px;border-radius:6px;background:var(--err-soft);color:var(--err);font-size:12px">{{ setupError }}</div>
+            </div>
+            <div style="padding:16px 24px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px">
+              <button class="btn btn-ghost btn-sm" @click="showSetup = false">Cancel</button>
+              <button class="btn btn-primary btn-sm" :disabled="setupSaving" @click="saveSetup">
+                {{ setupSaving ? 'Saving…' : 'Save & Enable' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </teleport>
+    </main>
+  `
+}

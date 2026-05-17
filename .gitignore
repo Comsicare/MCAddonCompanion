@@ -1,0 +1,9 @@
+dist/
+build/
+Output/
+__pycache__/
+*.pyc
+venv/
+state.json
+docs/superpowers/
+.superpowers/

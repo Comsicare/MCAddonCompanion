@@ -1,0 +1,81 @@
+name: Build Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build with PyInstaller
+        run: pyinstaller MCAddonCompanion.spec --clean --distpath dist_windows
+
+      - name: Build installer with Inno Setup
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+        shell: pwsh
+
+      - name: Upload installer to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Create release if it doesn't exist yet, then upload installer
+          API="https://api.github.com/repos/${REPO}"
+
+          # Check if release already exists (GitLab may have created it)
+          EXISTING=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${API}/releases/tags/${TAG}")
+          UPLOAD_URL=$(echo "$EXISTING" | python -c \
+            "import sys,json; d=json.load(sys.stdin); print(d.get('upload_url',''))" 2>/dev/null \
+            | sed 's/{?name,label}//')
+
+          if [ -z "$UPLOAD_URL" ]; then
+            echo "Release not found, creating it..."
+            # Determine if prerelease
+            PRERELEASE=true
+            if echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              PRERELEASE=false
+            fi
+            PAYLOAD="{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"body\":\"Windows build. Linux build added by GitLab CI.\",\"prerelease\":${PRERELEASE}}"
+            RELEASE=$(curl -sf -X POST \
+              -H "Authorization: token ${GH_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD" \
+              "${API}/releases")
+            UPLOAD_URL=$(echo "$RELEASE" | python -c \
+              "import sys,json; d=json.load(sys.stdin); print(d.get('upload_url',''))" 2>/dev/null \
+              | sed 's/{?name,label}//')
+          fi
+
+          if [ -z "$UPLOAD_URL" ]; then
+            echo "ERROR: Could not get or create release"
+            exit 1
+          fi
+
+          echo "Uploading installer..."
+          curl -sf -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @Output/MCAddonCompanion-Setup.exe \
+            "${UPLOAD_URL}?name=MCAddonCompanion-Setup.exe"
+          echo "Upload complete"
