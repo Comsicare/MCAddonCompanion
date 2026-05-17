@@ -64,8 +64,14 @@ const App = {
     const progress = ref({})
     const version = ref('')
     const updateInfo = ref(null)
+    const updateDismissed = ref(false)
+    const appUpdateState = ref(null)  // null | {state:'downloading'|'installing'|'done'|'error', pct:0-100}
 
     window.__onProgress = (event) => {
+      if (event.type === 'app_update') {
+        appUpdateState.value = { state: event.state, pct: event.pct }
+        return
+      }
       if (event.type === 'reset') { progress.value = {}; return }
       progress.value = { ...progress.value, ...event }
     }
@@ -78,7 +84,16 @@ const App = {
       } catch(e) { console.warn('API not ready:', e) }
     })
 
-    return { page, progress, version, updateInfo, NAV, PAGES, icon, isUpdatePrompt, UpdatePromptPage }
+    const startUpdate = async () => {
+      if (!updateInfo.value) return
+      appUpdateState.value = { state: 'downloading', pct: 0 }
+      await window.pywebview.api.start_app_update(
+        updateInfo.value.download_url,
+        updateInfo.value._pat || null,
+      )
+    }
+
+    return { page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate, NAV, PAGES, icon, isUpdatePrompt, UpdatePromptPage }
   },
   template: `
     <template v-if="isUpdatePrompt">
@@ -110,14 +125,21 @@ const App = {
         </nav>
 
         <div class="top-bar-right">
-          <div class="prism-status">
-            <span class="dot dot-ok"></span>
-            <span style="color: var(--text-1)">Prism</span>
-            <span>connected</span>
-          </div>
-          <button class="icon-btn" title="Notifications">
-            <span v-html="icon('bell', 15)"></span>
-          </button>
+          <template v-if="updateInfo && !updateDismissed">
+            <div style="display:flex;align-items:center;gap:8px;padding:4px 10px;background:var(--accent-soft,rgba(139,92,246,.15));border:1px solid var(--accent);border-radius:6px">
+              <span class="fs-12 fw-500" style="color:var(--accent)">{{ updateInfo.label }} v{{ updateInfo.version }}</span>
+              <button class="btn btn-primary btn-sm" style="font-size:11px;padding:3px 10px"
+                :disabled="!!appUpdateState"
+                @click="startUpdate">
+                <span v-if="appUpdateState && appUpdateState.state==='downloading'" class="spin" v-html="icon('spin',11)"></span>
+                <span v-else v-html="icon('download',11)"></span>
+                {{ appUpdateState ? (appUpdateState.state === 'downloading' ? appUpdateState.pct + '%' : appUpdateState.state) : 'Update' }}
+              </button>
+              <button v-if="!appUpdateState" class="icon-btn" style="color:var(--text-3)" @click="updateDismissed = true">
+                <span v-html="icon('x', 11)"></span>
+              </button>
+            </div>
+          </template>
           <button class="icon-btn" title="Menu">
             <span v-html="icon('dots', 15)"></span>
           </button>
@@ -136,11 +158,9 @@ const App = {
         </div>
         <div class="flex items-center gap-14">
           <span class="flex items-center gap-6">
-            <span class="dot dot-ok"></span>
-            <span>Up to date</span>
+            <span :class="['dot', updateInfo && !updateDismissed ? 'dot-warn' : 'dot-ok']"></span>
+            <span>{{ updateInfo && !updateDismissed ? 'Update available' : 'Up to date' }}</span>
           </span>
-          <span class="text-3">·</span>
-          <a href="#" style="color: var(--text-2); text-decoration: none;">Release notes</a>
         </div>
       </footer>
     </div>

@@ -942,7 +942,7 @@ class Api:
             tracked = tracked_map.get(entry["instance_name"])
             has_update = False
             latest = None
-            if tracked and repo:
+            if repo:  # check updates for all installed instances, not just tracked
                 try:
                     client = GitLabClient(repo["base_url"], repo["project_id"],
                                          repo.get("upload_token"), repo.get("read_token"))
@@ -977,7 +977,7 @@ class Api:
                 return {"mc_version": mc_ver, "loader": loader, "loader_version": loader_version}
         except Exception:
             pass
-        return {"mc_version": "", "loader": ""}
+        return {"mc_version": "", "loader": "", "loader_version": ""}
 
     def get_latest_pack_metadata(self, repo_id: str, pack_name: str) -> dict:
         """Return metadata.json for the latest version of pack_name, or {} if none."""
@@ -1014,6 +1014,30 @@ class Api:
 
     def dismiss_update(self) -> None:
         pass  # future: persist dismissed version to state
+
+    def start_app_update(self, download_url: str, pat: str | None = None) -> None:
+        """Download and install app update. Emits progress events then relaunches."""
+        from core.updater import download_update, install_update
+
+        def _run():
+            self._emit({"type": "app_update", "state": "downloading", "pct": 0})
+            def _progress(downloaded, total):
+                pct = int(downloaded * 100 / total) if total else 0
+                self._emit({"type": "app_update", "state": "downloading", "pct": pct})
+
+            path = download_update(download_url, _progress, pat=pat)
+            if not path:
+                self._emit({"type": "app_update", "state": "error", "pct": 0})
+                return
+            self._emit({"type": "app_update", "state": "installing", "pct": 100})
+            install_update(path)
+            self._emit({"type": "app_update", "state": "done", "pct": 100})
+            import time; time.sleep(1)
+            win = self._win[0] if self._win else None
+            if win:
+                win.destroy()
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def get_update_prompt_data(self) -> dict:
         """Called by update_prompt.js on load. Returns tracked pack update info."""
