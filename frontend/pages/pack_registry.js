@@ -1382,9 +1382,8 @@ export default {
             <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line)">
               <div class="fw-600 text-0" style="font-size:15px;margin-bottom:4px">Download server pack</div>
               <div class="fs-12 text-3">
-                Step {{ serverModalStep }} of 2
-                <span v-if="serverModalStep < 3"> — {{ serverModalStep === 1 ? 'Destination' : 'Content' }}</span>
-                <span v-else> — Downloading</span>
+                <span v-if="serverModalStep < 3">Step {{ serverModalStep }} of 2 — {{ serverModalStep === 1 ? 'Destination' : 'Content' }}</span>
+                <span v-else>Downloading…</span>
               </div>
             </div>
 
@@ -1450,7 +1449,9 @@ export default {
                 <button v-if="serverModalStep < 3" class="btn btn-ghost btn-sm" @click="showServerModal = false">Cancel</button>
                 <button v-if="serverModalStep === 1" class="btn btn-primary btn-sm" :disabled="!serverDest" @click="serverModalStep = 2">Next →</button>
                 <button v-if="serverModalStep === 2" class="btn btn-primary btn-sm" @click="startServerDownload">Confirm &amp; Download</button>
-                <button v-if="serverModalStep === 3 && serverSummary" class="btn btn-ghost btn-sm" @click="showServerModal = false">Close</button>
+                <button v-if="serverModalStep === 3" class="btn btn-ghost btn-sm" :disabled="!serverSummary" @click="showServerModal = false">
+                  {{ serverSummary ? 'Close' : 'Cancel' }}
+                </button>
               </div>
             </div>
 
