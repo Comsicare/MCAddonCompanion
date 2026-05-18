@@ -60,6 +60,66 @@ export default {
       setupSaving.value = false
     }
 
+    // Module settings modal (replaces setup wizard entry points)
+    const showModuleSettings = ref(false)
+    const moduleSettingsForm = ref({ instances_path: '', sync_path: '' })
+    const moduleSettingsSaving = ref(false)
+    const moduleSettingsError = ref(null)
+
+    const openModuleSettings = () => {
+      moduleSettingsForm.value = {
+        instances_path: data.value?.instances_path || '',
+        sync_path: data.value?.sync_path || '',
+      }
+      moduleSettingsError.value = null
+      showModuleSettings.value = true
+    }
+
+    const saveModuleSettings = async () => {
+      if (!moduleSettingsForm.value.instances_path || !moduleSettingsForm.value.sync_path) {
+        moduleSettingsError.value = 'Both paths are required.'
+        return
+      }
+      moduleSettingsSaving.value = true
+      moduleSettingsError.value = null
+      try {
+        await window.__apiReady
+        await window.pywebview.api.setup_instance_sync(
+          moduleSettingsForm.value.instances_path,
+          moduleSettingsForm.value.sync_path,
+        )
+        showModuleSettings.value = false
+        await load()
+      } catch(e) {
+        moduleSettingsError.value = String(e)
+      }
+      moduleSettingsSaving.value = false
+    }
+
+    const resetModuleSync = async () => {
+      try {
+        await window.__apiReady
+        await window.pywebview.api.reset_module('instance_sync')
+        showModuleSettings.value = false
+        await load()
+      } catch(e) {}
+    }
+
+    // Date formatter and error expansion
+    const fmtDate = (iso) => {
+      if (!iso) return '—'
+      const d = new Date(iso)
+      const diff = Date.now() - d.getTime()
+      const mins = Math.floor(diff / 60000)
+      if (mins < 1) return 'just now'
+      if (mins < 60) return `${mins}m ago`
+      const hrs = Math.floor(mins / 60)
+      if (hrs < 24) return `${hrs}h ago`
+      return `${Math.floor(hrs / 24)}d ago`
+    }
+
+    const expandedError = ref(null)
+
     onMounted(load)
 
     const filtered = computed(() => {
@@ -168,14 +228,22 @@ export default {
       archiveQueue, archivingNow, archiveResults, archiveInstance,
       showRestoreModal, archivedList, selectedArchive, restoring, restoreResult,
       openRestoreModal, doRestore, deleteZip, closeRestoreModal,
+      showModuleSettings, moduleSettingsForm, moduleSettingsSaving, moduleSettingsError,
+      openModuleSettings, saveModuleSettings, resetModuleSync,
+      fmtDate, expandedError,
     }
   },
   template: `
     <main class="page-wrap">
       <div class="page-header">
-        <div>
-          <div class="kicker">Sync</div>
-          <h1>Instance Sync</h1>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div>
+            <div class="kicker">Sync</div>
+            <h1>Instance Sync</h1>
+          </div>
+          <button class="icon-btn" title="Instance Sync Settings" @click="openModuleSettings" style="margin-top:4px">
+            <span v-html="icon('settings',15)"></span>
+          </button>
         </div>
         <div class="flex items-center gap-10">
           <button class="btn btn-ghost btn-sm flex items-center gap-6" @click="openRestoreModal">
@@ -195,7 +263,7 @@ export default {
           <div class="card-body" style="text-align:center;padding:56px 48px;display:flex;flex-direction:column;align-items:center;gap:16px">
             <div class="fw-500 text-0 fs-14">Instance sync is not configured.</div>
             <div class="text-3 fs-13">Set the Prism instances folder and a sync folder to enable launch/exit hooks.</div>
-            <button class="btn btn-primary btn-sm" @click="openSetup">Setup Instance Sync</button>
+            <button class="btn btn-primary btn-sm" @click="openModuleSettings">Setup Instance Sync</button>
           </div>
         </div>
       </template>
@@ -300,9 +368,18 @@ export default {
                       </div>
                     </div>
                   </td>
-                  <td><span class="mono fs-12 text-2">—</span></td>
-                  <td><span class="mono fs-12 text-2">—</span></td>
-                  <td style="text-align:right"><span class="mono fs-12 text-2">—</span></td>
+                  <td>
+                    <span class="mono fs-12 text-2" :title="inst.last_exit_sync || ''">{{ fmtDate(inst.last_exit_sync) }}</span>
+                    <span v-if="inst.last_errors?.length" style="margin-left:6px;cursor:pointer;color:var(--warn)"
+                      :title="inst.last_errors.join('\n')"
+                      @click="expandedError = expandedError === inst.name ? null : inst.name">⚠</span>
+                  </td>
+                  <td>
+                    <span class="mono fs-12 text-2" :title="inst.last_startup_sync || ''">{{ fmtDate(inst.last_startup_sync) }}</span>
+                  </td>
+                  <td style="text-align:right">
+                    <span class="mono fs-12 text-2">{{ inst.synced_size_mb ? inst.synced_size_mb + ' MB' : '—' }}</span>
+                  </td>
                   <td style="text-align:right">
                     <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
                       <!-- Inline archive result -->
@@ -327,6 +404,11 @@ export default {
                         {{ archivingNow === inst.name ? 'Archiving…' : 'Archive' }}
                       </button>
                     </div>
+                  </td>
+                </tr>
+                <tr v-if="expandedError === inst.name && inst.last_errors?.length" :key="inst.name + '-err'">
+                  <td colspan="7" style="padding:8px 16px;background:var(--err-soft)">
+                    <div v-for="e in inst.last_errors" :key="e" class="fs-12" style="color:var(--err)">{{ e }}</div>
                   </td>
                 </tr>
                 <tr v-if="!filtered.length">
@@ -386,6 +468,42 @@ export default {
               <template v-else>
                 <button class="btn btn-ghost btn-sm" @click="closeRestoreModal">Close</button>
               </template>
+            </div>
+          </div>
+        </div>
+      </teleport>
+
+      <!-- Module settings modal -->
+      <teleport to="body">
+        <div v-if="showModuleSettings"
+          style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px"
+          @mousedown.self="showModuleSettings = false">
+          <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:520px;overflow:hidden">
+            <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
+              <div class="fw-600 text-0" style="font-size:15px">Instance Sync Settings</div>
+              <button class="icon-btn" @click="showModuleSettings = false"><span v-html="icon('x',13)"></span></button>
+            </div>
+            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+              <div>
+                <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Prism Instances Path</div>
+                <input v-model="moduleSettingsForm.instances_path" class="input input-mono" placeholder="C:\Users\…\PrismLauncher\instances">
+                <div class="fs-12 text-3 mt-4">Folder containing all Prism instance subfolders.</div>
+              </div>
+              <div>
+                <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Sync Folder Path</div>
+                <input v-model="moduleSettingsForm.sync_path" class="input input-mono" placeholder="C:\Users\…\Nextcloud\Minecraft">
+                <div class="fs-12 text-3 mt-4">Folder where instance files will be synced (e.g. Nextcloud).</div>
+              </div>
+              <div v-if="moduleSettingsError" style="padding:8px 12px;border-radius:6px;background:var(--err-soft);color:var(--err);font-size:12px">{{ moduleSettingsError }}</div>
+            </div>
+            <div style="padding:16px 24px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
+              <button class="ghost-link" style="color:var(--err);font-size:12px" @click="resetModuleSync">Reset sync config</button>
+              <div class="flex items-center gap-8">
+                <button class="btn btn-ghost btn-sm" @click="showModuleSettings = false">Cancel</button>
+                <button class="btn btn-primary btn-sm" :disabled="moduleSettingsSaving" @click="saveModuleSettings">
+                  {{ moduleSettingsSaving ? 'Saving…' : 'Save' }}
+                </button>
+              </div>
             </div>
           </div>
         </div>
