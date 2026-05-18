@@ -93,7 +93,92 @@ const App = {
       )
     }
 
-    return { page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate, NAV, PAGES, icon, isUpdatePrompt, UpdatePromptPage }
+    // Menu
+    const showMenu = ref(false)
+
+    // Version & Updates modal
+    const showVersionModal = ref(false)
+    const manualUpdateResult = ref(null)
+
+    const openVersionModal = async () => {
+      showMenu.value = false
+      manualUpdateResult.value = null
+      showVersionModal.value = true
+      try {
+        await window.__apiReady
+        updateStream.value = await window.pywebview.api.get_update_stream_api()
+      } catch(e) {}
+    }
+
+    const checkUpdateManual = async () => {
+      manualUpdateResult.value = { checking: true }
+      try {
+        await window.__apiReady
+        const info = await window.pywebview.api.check_update()
+        manualUpdateResult.value = info ? { update: info } : { upToDate: true }
+        if (info) updateInfo.value = info
+      } catch(e) {
+        manualUpdateResult.value = { error: String(e) }
+      }
+    }
+
+    // Help & Debug modal
+    const showDebugModal = ref(false)
+    const hostInfo = ref(null)
+    const resetConfirm = ref(null)
+    const resetResult = ref({})
+
+    const confirmReset = async () => {
+      if (resetConfirm.value !== 'RESET') return
+      try {
+        await window.__apiReady
+        const result = await window.pywebview.api.reset_state()
+        resetResult.value = result
+      } catch(e) {
+        resetResult.value = { error: String(e) }
+      }
+    }
+
+    const updateStream = ref('alpha')
+    const streamSaving = ref(false)
+
+    const setStream = async (stream) => {
+      streamSaving.value = true
+      try {
+        await window.__apiReady
+        await window.pywebview.api.set_update_stream_api(stream)
+        updateStream.value = stream
+        manualUpdateResult.value = null
+      } catch(e) {}
+      streamSaving.value = false
+    }
+
+    const gitlabPat = ref('')
+    const savePat = async () => {
+      try {
+        await window.__apiReady
+        await window.pywebview.api.set_gitlab_pat_api(gitlabPat.value)
+      } catch(e) {}
+    }
+
+    const openDebugModal = async () => {
+      resetConfirm.value = null
+      resetResult.value = {}
+      showDebugModal.value = true
+      try {
+        await window.__apiReady
+        const [info, stream, pat] = await Promise.all([
+          window.pywebview.api.get_host_info(),
+          window.pywebview.api.get_update_stream_api(),
+          window.pywebview.api.get_gitlab_pat_api(),
+        ])
+        hostInfo.value = info
+        updateStream.value = stream
+        gitlabPat.value = pat
+      } catch(e) { hostInfo.value = null }
+    }
+
+    return { page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate, NAV, PAGES, icon, isUpdatePrompt, UpdatePromptPage, showMenu, showVersionModal, manualUpdateResult, openVersionModal, checkUpdateManual, showDebugModal, hostInfo, resetConfirm, resetResult, confirmReset, openDebugModal, updateStream, streamSaving, setStream, gitlabPat, savePat }
   },
   template: `
     <template v-if="isUpdatePrompt">
@@ -140,11 +225,23 @@ const App = {
               </button>
             </div>
           </template>
-          <button class="icon-btn" title="Menu">
-            <span v-html="icon('dots', 15)"></span>
-          </button>
+          <div style="position:relative">
+            <button class="icon-btn" title="Menu" @click="showMenu = !showMenu">
+              <span v-html="icon('dots', 15)"></span>
+            </button>
+            <div v-if="showMenu" style="position:absolute;right:0;top:calc(100% + 6px);background:var(--bg-1);border:1px solid var(--line);border-radius:8px;padding:4px;min-width:180px;z-index:200;box-shadow:0 4px 16px rgba(0,0,0,.3)">
+              <button class="menu-item" style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;background:none;border:none;color:var(--text-0);cursor:pointer;border-radius:5px;font-size:13px;text-align:left" @click="openVersionModal">
+                <span v-html="icon('bell', 14)"></span> Version &amp; Updates
+              </button>
+              <button class="menu-item" style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;background:none;border:none;color:var(--text-0);cursor:pointer;border-radius:5px;font-size:13px;text-align:left" @click="openDebugModal">
+                <span v-html="icon('settings', 14)"></span> Help &amp; Debug
+              </button>
+            </div>
+          </div>
         </div>
       </header>
+
+      <div v-if="showMenu" style="position:fixed;inset:0;z-index:199" @click="showMenu = false"></div>
 
       <div class="app-content">
         <component :is="PAGES[page]" :progress="progress" @navigate="page = $event" />
@@ -164,6 +261,114 @@ const App = {
         </div>
       </footer>
     </div>
+
+    <!-- Version & Updates modal -->
+    <teleport to="body">
+      <div v-if="showVersionModal" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:300" @click.self="showVersionModal = false">
+        <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:420px;max-width:95vw;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line)">
+            <span class="fw-600 fs-14">Version &amp; Updates</span>
+            <button class="icon-btn" @click="showVersionModal = false"><span v-html="icon('x', 14)"></span></button>
+          </div>
+          <div style="padding:20px;display:flex;flex-direction:column;gap:12px">
+            <div class="kicker" style="margin-bottom:2px">App Info</div>
+            <div style="padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line);display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span class="text-2 fs-13">Version</span>
+                <span class="mono fs-13">{{ version ? 'v' + version : '—' }}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span class="text-2 fs-13">Status</span>
+                <span class="fs-13" :style="updateInfo && !updateDismissed ? 'color:var(--accent)' : 'color:var(--text-ok,#4ade80)'">
+                  {{ updateInfo && !updateDismissed ? 'Update available: v' + updateInfo.version : 'Up to date' }}
+                </span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span class="text-2 fs-13">Update stream</span>
+                <div class="sub-tabs" style="font-size:11px">
+                  <button v-for="s in ['release','beta','alpha','dev']" :key="s"
+                    class="sub-tab" :class="{ active: updateStream === s }"
+                    :disabled="streamSaving"
+                    @click="setStream(s)"
+                    style="padding:3px 10px;font-size:11px;text-transform:capitalize">
+                    {{ s }}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <button class="btn btn-ghost btn-sm" style="align-self:flex-start" @click="checkUpdateManual">
+              <span v-html="icon('refresh', 13)"></span> Check for updates
+            </button>
+            <div v-if="manualUpdateResult" class="fs-12" style="padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
+              <template v-if="manualUpdateResult.checking">Checking…</template>
+              <template v-else-if="manualUpdateResult.upToDate">You are on the latest version.</template>
+              <template v-else-if="manualUpdateResult.update">Update available: v{{ manualUpdateResult.update.version }}</template>
+              <template v-else-if="manualUpdateResult.error">Error: {{ manualUpdateResult.error }}</template>
+            </div>
+          </div>
+        </div>
+      </div>
+    </teleport>
+
+    <!-- Help & Debug modal -->
+    <teleport to="body">
+      <div v-if="showDebugModal" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:300" @click.self="showDebugModal = false">
+        <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:480px;max-width:95vw;max-height:85vh;overflow-y:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg-1);z-index:1">
+            <span class="fw-600 fs-14">Help &amp; Debug</span>
+            <button class="icon-btn" @click="showDebugModal = false"><span v-html="icon('x', 14)"></span></button>
+          </div>
+          <div style="padding:20px;display:flex;flex-direction:column;gap:16px">
+            <div>
+              <div class="kicker" style="margin-bottom:10px">Diagnostics</div>
+              <div style="padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line);display:flex;flex-direction:column;gap:6px">
+                <template v-if="hostInfo">
+                  <div v-for="(val, key) in hostInfo" :key="key" style="display:flex;justify-content:space-between;align-items:center">
+                    <span class="text-2 fs-13">{{ key }}</span>
+                    <span class="mono fs-12 text-0">{{ val }}</span>
+                  </div>
+                </template>
+                <span v-else class="fs-13 text-3">Loading…</span>
+              </div>
+              <div style="margin-top:10px;padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
+                <div class="fs-13 fw-500 text-0" style="margin-bottom:6px">Upload Debug Data</div>
+                <div class="fs-12 text-3">Collect and share logs with support.</div>
+              </div>
+            </div>
+
+            <!-- Dev stream PAT (only shown when stream is 'dev') -->
+            <div v-if="updateStream === 'dev'">
+              <div class="kicker" style="margin-bottom:10px">Dev Stream Access</div>
+              <div style="padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
+                <div class="fs-13 fw-500 text-0" style="margin-bottom:6px">GitLab Dev Token</div>
+                <input
+                  v-model="gitlabPat"
+                  type="password"
+                  class="input input-mono"
+                  placeholder="glpat-…"
+                  style="font-size:12px"
+                  @blur="savePat">
+                <div class="fs-12 text-3" style="margin-top:6px">Required to download builds from private GitLab CI. Only relevant on Dev stream.</div>
+              </div>
+            </div>
+
+            <div>
+              <div class="kicker" style="margin-bottom:10px">Danger Zone</div>
+              <div style="padding:12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
+                <div class="fs-13 fw-500 text-0" style="margin-bottom:6px">Reset App State</div>
+                <div class="fs-12 text-3" style="margin-bottom:10px">Clears all saved configuration. Type RESET to confirm.</div>
+                <div style="display:flex;gap:8px">
+                  <input v-model="resetConfirm" class="input" placeholder="Type RESET" style="font-size:12px;flex:1">
+                  <button class="btn btn-ghost btn-sm" style="color:var(--text-err,#f87171);border-color:var(--text-err,#f87171)" :disabled="resetConfirm !== 'RESET'" @click="confirmReset">Reset</button>
+                </div>
+                <div v-if="resetResult.ok" class="fs-12" style="margin-top:8px;color:var(--text-ok,#4ade80)">State reset successfully.</div>
+                <div v-if="resetResult.error" class="fs-12" style="margin-top:8px;color:var(--text-err,#f87171)">{{ resetResult.error }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </teleport>
   `
 }
 
