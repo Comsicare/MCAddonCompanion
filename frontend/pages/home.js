@@ -310,7 +310,8 @@ export default {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="inst in filtered" :key="inst.name" @click="toggleRow(inst.name)" style="cursor:pointer">
+                <template v-for="inst in filtered" :key="inst.name">
+                <tr @click="toggleRow(inst.name)" style="cursor:pointer">
                   <td>
                     <div class="flex items-center gap-10">
                       <div class="inst-avatar">{{ abbr(inst.name) }}</div>
@@ -401,6 +402,7 @@ export default {
                     </div>
                   </td>
                 </tr>
+                </template>
                 <tr v-if="!filtered.length">
                   <td colspan="6" class="loading">No instances found</td>
                 </tr>
