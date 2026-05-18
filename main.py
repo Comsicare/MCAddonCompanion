@@ -736,6 +736,7 @@ class Api:
         mode = params.get("mode", "new")   # "new" or "existing"
         track = params.get("track", False)
         skip_files: set = set(params.get("skip_files", []))  # rel paths to skip overwriting
+        excluded_mods: set = set(params.get("excluded_mods", []))  # mod filenames to skip
 
         repos = get_pack_registry_repos()
         repo = next((r for r in repos if r["id"] == repo_id), None)
@@ -805,6 +806,8 @@ class Api:
                             continue
                         rel = member[len(prefix):] if prefix else member
                         if rel in skip_files:
+                            continue
+                        if excluded_mods and rel.startswith("mods/") and Path(rel).name in excluded_mods:
                             continue
                         dest = mc_dir / Path(rel)
                         dest.parent.mkdir(parents=True, exist_ok=True)
