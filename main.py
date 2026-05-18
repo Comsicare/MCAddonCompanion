@@ -233,7 +233,7 @@ class Api:
                 "startup_sync": eff.get("startup_sync", False),
             })
         repos = get_pack_registry_repos()
-        return {"instances": rows, "repos": repos}
+        return {"instances": rows, "repos": repos, "instance_sync_configured": is_instance_sync_configured()}
 
     def sync_instance(self, name: str, mode: str) -> None:
         plan = _plan_instance(name, mode)
@@ -323,14 +323,26 @@ class Api:
             d.name for d in INSTANCES_DIR.iterdir()
             if d.is_dir() and not d.name.endswith(".tmp")
         ) if INSTANCES_DIR.exists() else []
+        from modules.instance_sync.sync import read_last_result, read_manifest
+        sync_path_str = inst_sync.get("sync_path", "")
         rows = []
         for name in all_instances:
             inst_cfg = instances_cfg.get(name, {})
+            sync_dir = Path(sync_path_str) / "instance_sync" / name if sync_path_str else None
+            last = read_last_result(sync_dir) if sync_dir else {}
+            manifest = read_manifest(sync_dir) if sync_dir else {}
+            synced_size = round(
+                sum(v.get("size", 0) for v in manifest.values()) / 1_048_576, 1
+            ) if manifest else 0.0
             rows.append({
                 "name": name,
                 "exit_sync": inst_cfg.get("exit_sync") if inst_cfg.get("exit_sync") is not None else defaults["exit_sync"],
                 "startup_sync": inst_cfg.get("startup_sync") if inst_cfg.get("startup_sync") is not None else defaults.get("startup_sync", False),
                 "enabled": inst_cfg.get("enabled", True),
+                "last_exit_sync": last.get("timestamp") if last.get("mode") == "exit" else None,
+                "last_startup_sync": last.get("timestamp") if last.get("mode") == "startup" else None,
+                "last_errors": last.get("errors", []),
+                "synced_size_mb": synced_size,
             })
         return {
             "is_configured": True,
@@ -467,6 +479,125 @@ class Api:
             zip_path.unlink()
             return {"ok": True}
         return {"ok": False, "error": "Zip not found."}
+
+    def get_instance_detail(self, instance_name: str) -> dict:
+        """Return sync detail and pack info for one instance. All reads are local — no network."""
+        from modules.instance_sync.sync import read_last_result, read_manifest
+        from core.state import get_tracked_packs
+
+        cfg = get_instance_sync_config()
+        sync_path = cfg.get("sync_path") or ""
+        result = {
+            "last_exit_sync": None,
+            "last_startup_sync": None,
+            "synced_file_count": 0,
+            "synced_size_mb": 0.0,
+            "last_exit_errors": [],
+            "last_startup_errors": [],
+            "instance_folder_size_mb": None,
+            "pack": None,
+        }
+
+        if sync_path and is_instance_sync_configured():
+            sync_dir = Path(sync_path) / "instance_sync" / instance_name
+            last = read_last_result(sync_dir)
+            if last.get("mode") == "exit":
+                result["last_exit_sync"] = last.get("timestamp")
+                result["last_exit_errors"] = last.get("errors", [])
+            elif last.get("mode") == "startup":
+                result["last_startup_sync"] = last.get("timestamp")
+                result["last_startup_errors"] = last.get("errors", [])
+
+            manifest = read_manifest(sync_dir)
+            result["synced_file_count"] = len(manifest)
+            result["synced_size_mb"] = round(
+                sum(v.get("size", 0) for v in manifest.values()) / 1_048_576, 1
+            )
+
+        inst_dir = INSTANCES_DIR / instance_name
+        if inst_dir.exists():
+            try:
+                total = sum(f.stat().st_size for f in inst_dir.rglob("*") if f.is_file())
+                result["instance_folder_size_mb"] = round(total / 1_048_576, 1)
+            except Exception:
+                pass
+
+        from core.state import get_installed_instances as _get_inst
+        installed_map = {i["instance_name"]: i for i in _get_inst()}
+        tracked_map = {t["instance_name"]: t for t in get_tracked_packs()}
+        inst_record = installed_map.get(instance_name)
+        if inst_record:
+            tracked = tracked_map.get(instance_name)
+            result["pack"] = {
+                "name": inst_record.get("pack_name"),
+                "installed_version": inst_record.get("installed_version"),
+                "tracked": tracked is not None,
+                "has_update": False,
+                "latest_version": None,
+            }
+
+        return result
+
+    def archive_instance_move_only(self, instance_name: str) -> dict:
+        """Sync instance to sync folder then delete instance folder. No zip backup created."""
+        import shutil
+        from modules.instance_sync.sync import is_blacklisted, read_manifest, write_manifest, _file_stat
+
+        cfg = get_instance_sync_config()
+        instances_path = Path(cfg.get("instances_path") or str(INSTANCES_DIR))
+        sync_path = Path(cfg.get("sync_path") or "")
+        if not sync_path:
+            return {"ok": False, "error": "Sync path not configured."}
+
+        inst_dir = instances_path / instance_name
+        if not inst_dir.exists():
+            return {"ok": False, "error": f"Instance folder not found: {inst_dir}"}
+
+        mc_dir = get_minecraft_dir(instances_path, instance_name)
+
+        sync_dir = sync_path / "instance_sync" / instance_name
+        if mc_dir:
+            all_files = [(src, src.relative_to(mc_dir).as_posix())
+                         for src in mc_dir.rglob("*") if src.is_file()]
+            to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
+            sync_dir.mkdir(parents=True, exist_ok=True)
+            new_manifest = {}
+            for src, rel in to_copy:
+                dest = sync_dir / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src), str(dest))
+                new_manifest[rel] = _file_stat(dest)
+            write_manifest(sync_dir, new_manifest)
+
+        try:
+            shutil.rmtree(str(inst_dir))
+        except Exception as e:
+            return {"ok": False, "error": f"Could not remove instance folder: {e}"}
+
+        log.info("Move-only archived instance %r (no zip)", instance_name)
+        return {"ok": True}
+
+    def get_update_stream_api(self) -> str:
+        from core.state import get_update_stream
+        return get_update_stream()
+
+    def set_update_stream_api(self, stream: str) -> dict:
+        from core.state import set_update_stream, VALID_STREAMS
+        if stream not in VALID_STREAMS:
+            return {"ok": False, "error": f"Invalid stream: {stream}"}
+        try:
+            set_update_stream(stream)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def get_gitlab_pat_api(self) -> str:
+        from core.state import get_gitlab_pat
+        return get_gitlab_pat() or ""
+
+    def set_gitlab_pat_api(self, pat: str) -> None:
+        from core.state import set_gitlab_pat
+        set_gitlab_pat(pat.strip())
 
     def set_instance_default(self, key: str, value: bool) -> None:
         state = load_state()
