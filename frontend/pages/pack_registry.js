@@ -1,10 +1,12 @@
 import { ref, onMounted, computed, watch } from '../vue.esm-browser.js'
+import ActionModal from '../components/action-modal.js'
 
 const PUBLISH_STEPS = ['Build zip', 'Upload pack', 'Upload metadata']
 
 export default {
   props: ['progress'],
   emits: ['navigate'],
+  components: { ActionModal },
   setup(props) {
     const tab = ref('repos')
 
@@ -359,6 +361,36 @@ export default {
     const installExistingInstance = ref('')
     const installing = ref(false)
     const INSTALL_STEPS = ['Download zip', 'Extract files', 'Create instance']
+    const _makeModal = () => ({
+      show: false, phase: 'summary', done: false, error: false,
+      title: '', summary: '', deletions: [],
+      steps: [], logs: [],
+    })
+    const installModal = ref(_makeModal())
+    const publishModal = ref(_makeModal())
+    const updateModal  = ref(_makeModal())
+
+    const routeToModal = (modal, event) => {
+      if (event.type === 'reset') {
+        modal.value.steps = modal.value.steps.map(s => ({ ...s, state: 'idle', detail: '' }))
+        modal.value.logs = []
+      } else if (event.type === 'step') {
+        const s = modal.value.steps[event.step]
+        if (s) {
+          s.state = event.state === 'ok' ? 'done' : event.state === 'error' ? 'err' : 'run'
+          s.detail = event.detail || ''
+          const label = s.label
+          const logLine = `[${label}] ${event.detail || s.state}`
+          const existingIdx = modal.value.logs.findLastIndex(l => l.startsWith(`[${label}]`))
+          if (existingIdx >= 0) modal.value.logs[existingIdx] = logLine
+          else modal.value.logs.push(logLine)
+        }
+      } else if (event.type === 'summary') {
+        modal.value.done = true
+        modal.value.error = event.tone !== 'ok'
+        modal.value.logs.push(event.text)
+      }
+    }
     const installSteps = ref(INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' })))
     const installSummary = ref(null)
 
@@ -621,42 +653,15 @@ export default {
         return
       }
 
-      // Route to per-instance progress when on instances tab and an instance op is active
-      if (tab.value === 'instances') {
-        const activeInst = Object.keys(instanceProgress.value).find(k => instanceProgress.value[k].active)
-        if (activeInst) {
-          const ip = instanceProgress.value[activeInst]
-          if (event.type === 'reset') {
-            ip.steps = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
-            ip.summary = null
-          } else if (event.type === 'step') {
-            if (ip.steps[event.step]) {
-              ip.steps[event.step].state = event.state === 'ok' ? 'done' : event.state === 'error' ? 'err' : 'run'
-              ip.steps[event.step].detail = event.detail || ''
-            }
-          } else if (event.type === 'summary') {
-            ip.summary = event
-            ip.active = false
-            // Refresh the list after a successful install
-            if (event.tone === 'ok') loadInstalledInstances()
-          }
-          return
-        }
+      const flow = event.flow
+      if (flow === 'install') {
+        routeToModal(installModal, event)
+        if (event.type === 'summary' && event.tone === 'ok') loadInstalledInstances()
+        return
       }
-
-      const steps = tab.value === 'browse' ? installSteps : publishSteps
-      const setSummary = tab.value === 'browse'
-        ? (e) => { installSummary.value = e; installing.value = false }
-        : (e) => { publishSummary.value = e; publishing.value = false }
-      if (event.type === 'reset') {
-        steps.value = steps.value.map(s => ({ ...s, state: 'idle', detail: '' }))
-      } else if (event.type === 'step') {
-        if (steps.value[event.step]) {
-          steps.value[event.step].state = event.state === 'ok' ? 'done' : event.state === 'error' ? 'err' : 'run'
-          steps.value[event.step].detail = event.detail || ''
-        }
-      } else if (event.type === 'summary') {
-        setSummary(event)
+      if (flow === 'publish') {
+        routeToModal(publishModal, event)
+        return
       }
     }
 
@@ -673,6 +678,7 @@ export default {
 
     return {
       tab, icon,
+      installModal, publishModal, updateModal, routeToModal, ActionModal,
       // repos
       repos, reposLoading, selectedRepo, repoForm, repoSaving, repoError, repoSuccess,
       testResult, testLoading,
