@@ -37,7 +37,14 @@ export default {
     const icon = (name, size = 16) => window.__icon(name, size)
     const abbr = name => name.slice(0, 2).toUpperCase()
 
-    return { data, loading, error, query, filtered, syncedCount, load, icon, abbr }
+    const openInstancesFolder = async () => {
+      try {
+        await window.__apiReady
+        await window.pywebview.api.open_instances_folder()
+      } catch(e) {}
+    }
+
+    return { data, loading, error, query, filtered, syncedCount, load, icon, abbr, openInstancesFolder }
   },
   template: `
     <main class="page-wrap">
@@ -90,7 +97,7 @@ export default {
               </div>
               <div class="flex items-center justify-between mt-14" style="padding-top:12px; border-top:1px solid var(--line)">
                 <span class="mono fs-12 text-3">PrismLauncher/instances</span>
-                <button class="ghost-link fs-12">Open <span v-html="icon('external',11)"></span></button>
+                <button class="ghost-link fs-12" @click="openInstancesFolder">Open <span v-html="icon('external',11)"></span></button>
               </div>
             </div>
           </div>
@@ -149,7 +156,7 @@ export default {
                 <span class="fs-12 text-3">{{ r.package_name }}</span>
               </div>
               <div style="padding:4px 10px 0; display:flex; justify-content:space-between; align-items:center">
-                <button class="ghost-link"><span v-html="icon('plus',11)"></span> Add repo</button>
+                <button class="ghost-link" @click="$emit('navigate','pack_registry')"><span v-html="icon('plus',11)"></span> Add repo</button>
               </div>
             </div>
           </div>
