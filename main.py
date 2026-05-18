@@ -1074,6 +1074,117 @@ class Api:
         if win:
             win.destroy()
 
+    def pick_folder(self) -> str | None:
+        import webview as _webview
+        result = _webview.windows[0].create_file_dialog(_webview.FOLDER_DIALOG)
+        if result:
+            return result[0]
+        return None
+
+    def get_downloads_folder(self) -> str:
+        from pathlib import Path
+        return str(Path.home() / "Downloads")
+
+    def download_server_pack(self, params: dict) -> None:
+        import urllib.request, zipfile, io as _io
+        from core.gitlab import GitLabClient
+
+        repo_id = params["repo_id"]
+        pack_name = params["pack_name"]
+        version = params["version"]
+        dest_folder = Path(params["dest_folder"])
+        as_zip = params.get("as_zip", True)
+        include_config = params.get("include_config", True)
+
+        repos = get_pack_registry_repos()
+        repo = next((r for r in repos if r["id"] == repo_id), None)
+        if not repo:
+            self._emit({"type": "server_pack", "step": 0, "state": "error", "detail": "Repo not found."})
+            self._emit({"type": "server_pack_summary", "text": "Repo not found.", "tone": "error"})
+            return
+
+        slug = _slugify(pack_name)
+
+        def _run():
+            try:
+                # Step 0: Download zip
+                self._emit({"type": "server_pack", "step": 0, "state": "running", "detail": ""})
+                client = GitLabClient(repo["base_url"], repo["project_id"],
+                                      repo.get("upload_token"), repo.get("read_token"))
+                zip_filename = f"{slug}-{version}.zip"
+                url = client.build_download_url(slug, version, zip_filename)
+                req = urllib.request.Request(url)
+                req.add_header("User-Agent", "MCAddonCompanion")
+                if repo.get("read_token"):
+                    req.add_header("PRIVATE-TOKEN", repo["read_token"])
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    data = resp.read()
+                size_mb = len(data) / 1_048_576
+                self._emit({"type": "server_pack", "step": 0, "state": "ok", "detail": f"{size_mb:.1f} MB"})
+
+                # Step 1: Filter content
+                self._emit({"type": "server_pack", "step": 1, "state": "running", "detail": ""})
+                meta = client.get_metadata(slug, version)
+                server_mods: set[str] = set()
+                for m in meta.get("mods", []):
+                    if isinstance(m, dict) and m.get("side") in ("required", "server"):
+                        server_mods.add(m["file"])
+
+                EXCLUDED_PREFIXES = ("saves/", "shaderpacks/", "resourcepacks/")
+
+                filtered: list[tuple[str, bytes]] = []
+                with zipfile.ZipFile(_io.BytesIO(data)) as zf:
+                    members = zf.namelist()
+                    has_mc_prefix = any(m.startswith(".minecraft/") for m in members)
+                    has_plain_prefix = any(m.startswith("minecraft/") for m in members)
+                    prefix = ".minecraft/" if has_mc_prefix else ("minecraft/" if has_plain_prefix else "")
+                    for member in members:
+                        if member.endswith("/"):
+                            continue
+                        bare = member[len(prefix):] if prefix else member
+                        if bare in ("instance.cfg", "mmc-pack.json"):
+                            continue
+                        if any(bare.startswith(p) for p in EXCLUDED_PREFIXES):
+                            continue
+                        if bare.startswith("config/") and not include_config:
+                            continue
+                        if bare.startswith("mods/"):
+                            mod_name = Path(bare).name
+                            if mod_name not in server_mods:
+                                continue
+                        filtered.append((bare, zf.read(member)))
+
+                self._emit({"type": "server_pack", "step": 1, "state": "ok",
+                            "detail": f"{len(filtered)} files"})
+
+                # Step 2: Write to destination
+                self._emit({"type": "server_pack", "step": 2, "state": "running", "detail": ""})
+                dest_folder.mkdir(parents=True, exist_ok=True)
+                output_name = f"{slug}-{version}-server"
+
+                if as_zip:
+                    out_path = dest_folder / f"{output_name}.zip"
+                    with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as out_zf:
+                        for rel, content in filtered:
+                            out_zf.writestr(rel, content)
+                    result_path = str(out_path)
+                else:
+                    out_dir = dest_folder / output_name
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    for rel, content in filtered:
+                        dest_file = out_dir / Path(rel)
+                        dest_file.parent.mkdir(parents=True, exist_ok=True)
+                        dest_file.write_bytes(content)
+                    result_path = str(out_dir)
+
+                self._emit({"type": "server_pack", "step": 2, "state": "ok", "detail": ""})
+                self._emit({"type": "server_pack_summary", "text": result_path, "tone": "ok"})
+
+            except Exception as e:
+                self._emit({"type": "server_pack_summary", "text": f"Error: {e}", "tone": "error"})
+
+        threading.Thread(target=_run, daemon=True).start()
+
 
 # ---------------------------------------------------------------------------
 # Entry point
