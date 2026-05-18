@@ -358,7 +358,7 @@ const App = {
                 <template v-for="mod in ['schematic_sync','instance_sync','pack_registry']" :key="mod">
                   <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
                     <div>
-                      <div class="fs-13 fw-500 text-0">{{ mod.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) }}</div>
+                      <div class="fs-13 fw-500 text-0">{{ {'schematic_sync':'Schematic Sync','instance_sync':'Instance Sync','pack_registry':'Pack Registry'}[mod] }}</div>
                       <div v-if="resetResult[mod] === 'ok'" class="fs-12" style="color:var(--ok)">Reset complete</div>
                       <div v-else-if="resetResult[mod] === 'error'" class="fs-12" style="color:var(--err)">Reset failed</div>
                     </div>

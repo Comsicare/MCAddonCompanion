@@ -8,18 +8,21 @@ export default {
     const loading = ref(true)
     const error = ref(null)
     const query = ref('')
+    let _mounted = true
+    onUnmounted(() => { _mounted = false })
 
     const load = async () => {
       loading.value = true
       error.value = null
       try {
         await window.__apiReady
-        data.value = await window.pywebview.api.get_home_data()
+        const d = await window.pywebview.api.get_home_data()
+        if (_mounted) data.value = d
       } catch(e) {
-        error.value = String(e)
+        if (_mounted) error.value = String(e)
         console.error('get_home_data failed:', e)
       }
-      loading.value = false
+      if (_mounted) loading.value = false
     }
 
     onMounted(load)
@@ -47,8 +50,6 @@ export default {
     // Expandable row detail
     const expandedRow = ref(null)
     const rowDetail = ref({})
-    let _mounted = true
-    onUnmounted(() => { _mounted = false })
 
     const toggleRow = (instName) => {
       if (expandedRow.value === instName) {
