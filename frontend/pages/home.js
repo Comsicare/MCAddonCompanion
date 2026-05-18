@@ -304,19 +304,32 @@ export default {
                 </div>
               </div>
 
+              <!-- Pre/Post Launch Hook (separate top-level toggle) -->
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line)">
+                <div>
+                  <div class="fs-13 fw-500 text-0">Pre/Post Launch Hook</div>
+                  <div class="fs-12 text-3" style="margin-top:2px">Run sync commands before launch and after exit</div>
+                </div>
+                <div class="toggle-track" :class="settingsModal.form.hook_enabled ? 'on' : 'off'"
+                  @click="settingsModal.form.hook_enabled = !settingsModal.form.hook_enabled" style="flex:none">
+                  <div class="toggle-thumb"></div>
+                </div>
+              </div>
+
               <!-- Instance Sync + sub-toggles -->
               <div style="padding:12px 0;border-bottom:1px solid var(--line)">
                 <div style="display:flex;align-items:center;justify-content:space-between">
                   <div>
                     <div class="fs-13 fw-500 text-0">Instance Sync</div>
-                    <div class="fs-12 text-3" style="margin-top:2px">Enable pre/post-launch sync hook for this instance</div>
+                    <div class="fs-12 text-3" style="margin-top:2px">Sync instance files on launch and exit</div>
                   </div>
-                  <div class="toggle-track" :class="settingsModal.form.hook_enabled ? 'on' : 'off'"
-                    @click="settingsModal.form.hook_enabled = !settingsModal.form.hook_enabled" style="flex:none">
+                  <!-- TODO: Instance Sync top-level toggle — wire to enable/disable instance sync for this instance when feature is reworked -->
+                  <div class="toggle-track" :class="(settingsModal.form.exit_sync || settingsModal.form.startup_sync) ? 'on' : 'off'"
+                    style="flex:none;opacity:.5;cursor:not-allowed" title="Configure via sub-toggles below">
                     <div class="toggle-thumb"></div>
                   </div>
                 </div>
-                <!-- TODO: wire exit_sync and startup_sync logic when instance sync feature is reworked -->
+                <!-- TODO: wire exit_sync and startup_sync save logic when instance sync feature is reworked -->
                 <div style="margin-top:8px;padding-left:16px;display:flex;flex-direction:column;gap:6px;border-left:2px solid var(--line)">
                   <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
                     <div>
