@@ -1,4 +1,4 @@
-import { ref, onMounted, computed } from '../vue.esm-browser.js'
+import { ref, onMounted, onUnmounted, computed } from '../vue.esm-browser.js'
 
 export default {
   props: ['progress'],
@@ -47,6 +47,8 @@ export default {
     // Expandable row detail
     const expandedRow = ref(null)
     const rowDetail = ref({})
+    let _mounted = true
+    onUnmounted(() => { _mounted = false })
 
     const toggleRow = (instName) => {
       if (expandedRow.value === instName) {
@@ -58,8 +60,8 @@ export default {
       rowDetail.value = { ...rowDetail.value, [instName]: { loading: true, data: null } }
       window.__apiReady.then(() =>
         window.pywebview.api.get_instance_detail(instName)
-          .then(d => { rowDetail.value = { ...rowDetail.value, [instName]: { loading: false, data: d } } })
-          .catch(() => { rowDetail.value = { ...rowDetail.value, [instName]: { loading: false, data: null } } })
+          .then(d => { if (_mounted) rowDetail.value = { ...rowDetail.value, [instName]: { loading: false, data: d } } })
+          .catch(() => { if (_mounted) rowDetail.value = { ...rowDetail.value, [instName]: { loading: false, data: null } } })
       )
     }
 
@@ -67,8 +69,8 @@ export default {
       rowDetail.value = { ...rowDetail.value, [instName]: { loading: true, data: null } }
       window.__apiReady.then(() =>
         window.pywebview.api.get_instance_detail(instName)
-          .then(d => { rowDetail.value = { ...rowDetail.value, [instName]: { loading: false, data: d } } })
-          .catch(() => { rowDetail.value = { ...rowDetail.value, [instName]: { loading: false, data: null } } })
+          .then(d => { if (_mounted) rowDetail.value = { ...rowDetail.value, [instName]: { loading: false, data: d } } })
+          .catch(() => { if (_mounted) rowDetail.value = { ...rowDetail.value, [instName]: { loading: false, data: null } } })
       )
     }
 
