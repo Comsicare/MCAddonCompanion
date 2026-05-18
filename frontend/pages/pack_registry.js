@@ -1,4 +1,4 @@
-import { ref, onMounted, computed, watch } from '../vue.esm-browser.js'
+import { ref, onMounted, onUnmounted, computed, watch } from '../vue.esm-browser.js'
 import ActionModal from '../components/action-modal.js'
 
 const PUBLISH_STEPS = ['Build zip', 'Upload pack', 'Upload metadata']
@@ -14,21 +14,23 @@ export default {
     const installedInstances = ref([])
     const instancesLoading = ref(false)
     const preparingInstall = ref(false)  // true while fetching metadata before modal opens
+    let _mounted = true
+    onUnmounted(() => { _mounted = false })
     const loadInstalledInstances = async () => {
       instancesLoading.value = true
       try {
         await window.__apiReady
-        installedInstances.value = await window.pywebview.api.get_installed_instances()
+        if (_mounted) installedInstances.value = await window.pywebview.api.get_installed_instances()
       } catch(e) {
-        installedInstances.value = []
+        if (_mounted) installedInstances.value = []
       }
-      instancesLoading.value = false
+      if (_mounted) instancesLoading.value = false
       // Fetch update status in background — never blocks or resets the table
       try {
         const updates = await window.pywebview.api.get_instance_update_status()
         const map = {}
         updates.forEach(u => { map[u.instance_name] = u })
-        installedInstances.value = installedInstances.value.map(inst => ({
+        if (_mounted) installedInstances.value = installedInstances.value.map(inst => ({
           ...inst,
           ...(map[inst.instance_name] || {}),
         }))
