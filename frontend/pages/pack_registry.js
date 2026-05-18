@@ -71,22 +71,17 @@ export default {
     }
 
     const reinstallInstance = async (inst) => {
-      try {
-        await window.__apiReady
-        _initInstProgress(inst.instance_name)
-        const params = {
-          repo_id: inst.repo_id,
-          pack_name: inst.pack_name,
-          version: inst.installed_version,
-          instance_name: inst.instance_name,
-          mode: 'new',
-          track: inst.tracked,
-        }
-        await window.pywebview.api.install_pack({ ...params, skip_files: [] })
-      } catch(e) {
-        if (instanceProgress.value[inst.instance_name])
-          instanceProgress.value[inst.instance_name].summary = { tone: 'error', text: String(e) }
+      const params = {
+        repo_id: inst.repo_id,
+        pack_name: inst.pack_name,
+        version: inst.installed_version,
+        instance_name: inst.instance_name,
+        mode: 'new',
+        track: inst.tracked,
+        skip_files: [],
+        excluded_mods: [],
       }
+      openUpdateModal(params, [], true)
     }
 
     const installUpdate = async (inst) => {
@@ -98,6 +93,13 @@ export default {
           inst.latest_version,
           inst.instance_name
         )
+        let removedMods = []
+        try {
+          const versions = await window.pywebview.api.get_versions(inst.repo_id, inst.pack_name)
+          const latestVer = versions.find(v => v.version === inst.latest_version)
+          removedMods = latestVer?.metadata?.removed_mods || []
+        } catch(e) {}
+
         const params = {
           repo_id: inst.repo_id,
           pack_name: inst.pack_name,
@@ -105,19 +107,11 @@ export default {
           instance_name: inst.instance_name,
           mode: 'existing',
           track: inst.tracked,
+          skip_files: conflicts,
+          excluded_mods: [],
         }
-        if (conflicts.length) {
-          conflictGroups.value = groupConflicts(conflicts)
-          conflictInstallParams.value = params
-          showConflictModal.value = true
-        } else {
-          _initInstProgress(inst.instance_name)
-          await window.pywebview.api.install_pack({ ...params, skip_files: [] })
-        }
-      } catch(e) {
-        if (instanceProgress.value[inst.instance_name])
-          instanceProgress.value[inst.instance_name].summary = { tone: 'error', text: String(e) }
-      }
+        openUpdateModal(params, removedMods, false)
+      } catch(e) {}
     }
     const icon = (name, size = 16) => window.__icon(name, size)
 
@@ -649,6 +643,49 @@ export default {
       publishModal.value = _makeModal()
     }
 
+    const openUpdateModal = (params, removedMods, isReinstall) => {
+      const title = isReinstall ? 'Reinstall Pack' : 'Update Pack'
+      const summary = isReinstall
+        ? `${params.pack_name} v${params.version} → ${params.instance_name}`
+        : `${params.pack_name} → v${params.version} on ${params.instance_name}`
+      updateModal.value = {
+        show: true, phase: 'summary', done: false, error: false,
+        title,
+        summary,
+        deletions: removedMods || [],
+        steps: INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' })),
+        logs: [],
+        _params: params,
+      }
+    }
+
+    const confirmUpdate = async () => {
+      const params = updateModal.value._params
+      updateModal.value.phase = 'progress'
+      try {
+        await window.__apiReady
+        await window.pywebview.api.install_pack(params)
+      } catch(e) {
+        updateModal.value.done = true
+        updateModal.value.error = true
+        updateModal.value.logs.push(`Error: ${e}`)
+      }
+    }
+
+    const retryUpdate = async () => {
+      updateModal.value.steps = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
+      updateModal.value.logs = []
+      updateModal.value.done = false
+      updateModal.value.error = false
+      await confirmUpdate()
+    }
+
+    const closeUpdateModal = () => {
+      const wasOk = updateModal.value.done && !updateModal.value.error
+      updateModal.value = _makeModal()
+      if (wasOk) loadInstalledInstances()
+    }
+
     const openServerModal = async () => {
       serverModalStep.value = 1
       serverAsZip.value = true
@@ -777,6 +814,7 @@ export default {
       installModal, publishModal, updateModal, routeToModal, ActionModal,
       openInstallModal, confirmInstall, retryInstall, closeInstallModal,
       publishRemovedMods, openPublishModal, confirmPublish, retryPublish, closePublishModal,
+      openUpdateModal, confirmUpdate, retryUpdate, closeUpdateModal,
       // repos
       repos, reposLoading, selectedRepo, repoForm, repoSaving, repoError, repoSuccess,
       testResult, testLoading,
@@ -1269,30 +1307,6 @@ export default {
                     </div>
                   </td>
                 </tr>
-                <!-- Per-instance progress row -->
-                <tr v-if="instanceProgress[inst.instance_name]">
-                  <td colspan="7" style="padding:0 16px 12px;background:var(--bg-0)">
-                    <div style="display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:var(--bg-1)">
-                      <div v-for="(s, i) in instanceProgress[inst.instance_name].steps" :key="i"
-                        style="display:flex;align-items:center;gap:8px">
-                        <span class="progress-step-icon" :class="s.state">
-                          <span v-if="s.state==='done'" v-html="icon('check',10)"></span>
-                          <span v-else-if="s.state==='run'" class="spin" v-html="icon('spin',10)"></span>
-                          <span v-else-if="s.state==='err'" v-html="icon('x',10)"></span>
-                        </span>
-                        <span class="fs-12 text-0">{{ s.label }}</span>
-                        <span v-if="s.detail" class="mono fs-11 text-3">{{ s.detail }}</span>
-                      </div>
-                      <div v-if="instanceProgress[inst.instance_name].summary"
-                        style="margin-top:6px;padding:6px 8px;border-radius:4px;font-size:12px;font-weight:500"
-                        :style="instanceProgress[inst.instance_name].summary.tone==='ok' ? 'background:var(--ok-soft);color:var(--ok)' : 'background:var(--err-soft);color:var(--err)'">
-                        {{ instanceProgress[inst.instance_name].summary.text }}
-                        <button @click="delete instanceProgress[inst.instance_name]"
-                          style="margin-left:10px;background:none;border:none;cursor:pointer;color:inherit;font-size:11px;opacity:.7">✕</button>
-                      </div>
-                    </div>
-                  </td>
-                </tr>
                 </template>
               </tbody>
             </table>
@@ -1341,6 +1355,22 @@ export default {
         @confirm="confirmPublish"
         @cancel="closePublishModal"
         @retry="retryPublish"
+      />
+
+      <!-- ─── UPDATE ACTION MODAL ───────────────────────────────────────────────── -->
+      <action-modal
+        :show="updateModal.show"
+        :title="updateModal.title"
+        :summary="updateModal.summary"
+        :deletions="updateModal.deletions"
+        :steps="updateModal.steps"
+        :logs="updateModal.logs"
+        :phase="updateModal.phase"
+        :done="updateModal.done"
+        :error="updateModal.error"
+        @confirm="confirmUpdate"
+        @cancel="closeUpdateModal"
+        @retry="retryUpdate"
       />
 
       <!-- ─── CONFLICT MODAL ───────────────────────────────────────────────────── -->
