@@ -762,7 +762,19 @@ class Api:
                 if repo.get("read_token"):
                     req.add_header("PRIVATE-TOKEN", repo["read_token"])
                 with urllib.request.urlopen(req, timeout=120) as resp:
-                    data = resp.read()
+                    total_bytes = int(resp.headers.get("Content-Length") or 0)
+                    chunks = []
+                    received = 0
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                        received += len(chunk)
+                        if total_bytes:
+                            pct = min(int(received * 100 / total_bytes), 99)
+                            self._emit({"type": "progress", "flow": "install", "step": 0, "pct": pct})
+                    data = b"".join(chunks)
                 size_mb = len(data) / 1_048_576
                 self._emit({"type": "step", "flow": "install", "step": 0, "state": "ok", "detail": f"{size_mb:.1f} MB"})
 
