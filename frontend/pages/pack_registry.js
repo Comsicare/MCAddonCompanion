@@ -705,7 +705,7 @@ export default {
 
     // Progress handler — routes to publish or install steps based on active tab
     const _baseHandler = window.__onProgress
-    window.__onProgress = (event) => {
+    const _packHandler = (event) => {
       if (_baseHandler) _baseHandler(event)
 
       if (event.type === 'server_pack_progress') {
@@ -740,6 +740,8 @@ export default {
         return
       }
     }
+    window.__onProgress = _packHandler
+    onUnmounted(() => { window.__onProgress = _baseHandler })
 
     onMounted(async () => {
       await loadRepos()
