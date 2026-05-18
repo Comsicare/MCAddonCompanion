@@ -1072,9 +1072,9 @@ export default {
 
                   <!-- Mode toggle -->
                   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">
-                    <div style="display:flex;gap:8px">
-                      <button :class="['btn', 'btn-sm', installMode === 'new' ? 'btn-primary' : 'btn-ghost']" @click="installMode = 'new'">Create new instance</button>
-                      <button :class="['btn', 'btn-sm', installMode === 'existing' ? 'btn-primary' : 'btn-ghost']" @click="installMode = 'existing'">Install to existing</button>
+                    <div class="sub-tabs">
+                      <button class="sub-tab" :class="{ active: installMode === 'new' }" @click="installMode = 'new'">Create new instance</button>
+                      <button class="sub-tab" :class="{ active: installMode === 'existing' }" @click="installMode = 'existing'">Install to existing</button>
                     </div>
                     <button class="btn btn-ghost btn-sm flex items-center gap-6" @click="openServerModal">
                       <span v-html="icon('download', 12)"></span> Download server pack
