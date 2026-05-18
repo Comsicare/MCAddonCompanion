@@ -704,12 +704,22 @@ class Api:
                 self._emit({"type": "step", "flow": "publish", "step": 0, "state": "running", "detail": ""})
                 with tempfile.TemporaryDirectory() as tmp:
                     zip_path = Path(tmp) / zip_filename
-                    build_export_zip(inst_name, mc_dir, instance_dir, file_list, zip_path)
+                    def _zip_progress(done, total):
+                        if total:
+                            pct = min(int(done * 100 / total), 99)
+                            self._emit({"type": "progress", "flow": "publish", "step": 0, "pct": pct})
+                    build_export_zip(inst_name, mc_dir, instance_dir, file_list, zip_path,
+                                     on_progress=_zip_progress)
                     size_mb = zip_path.stat().st_size / 1_048_576
                     self._emit({"type": "step", "flow": "publish", "step": 0, "state": "ok", "detail": f"{size_mb:.1f} MB"})
 
                     self._emit({"type": "step", "flow": "publish", "step": 1, "state": "running", "detail": ""})
-                    client.upload_file_path(slug, version, zip_filename, zip_path)
+                    def _upload_progress(sent, total):
+                        if total:
+                            pct = min(int(sent * 100 / total), 99)
+                            self._emit({"type": "progress", "flow": "publish", "step": 1, "pct": pct})
+                    client.upload_file_path(slug, version, zip_filename, zip_path,
+                                            on_progress=_upload_progress)
                     self._emit({"type": "step", "flow": "publish", "step": 1, "state": "ok", "detail": ""})
 
                     self._emit({"type": "step", "flow": "publish", "step": 2, "state": "running", "detail": ""})
