@@ -51,15 +51,24 @@ export default {
 
           <!-- Body: progress phase -->
           <div v-if="phase === 'progress'" class="modal-fade" style="overflow-y:auto;flex:1;padding:16px 24px;display:flex;flex-direction:column;gap:4px">
-            <div v-for="(s, i) in steps" :key="i" class="progress-step">
-              <span class="progress-step-icon" :class="s.state">
-                <span v-if="s.state === 'done'" style="font-size:10px">✓</span>
-                <span v-else-if="s.state === 'run'" class="spin" style="font-size:10px">↻</span>
-                <span v-else-if="s.state === 'err'" style="font-size:10px">✕</span>
-              </span>
-              <span class="fs-13 text-0">{{ s.label }}</span>
-              <span v-if="s.detail" class="mono fs-11 text-3" style="margin-left:auto">{{ s.detail }}</span>
-            </div>
+            <template v-for="(s, i) in steps" :key="i">
+              <div class="progress-step">
+                <span class="progress-step-icon" :class="s.state">
+                  <span v-if="s.state === 'done'" style="font-size:10px">✓</span>
+                  <span v-else-if="s.state === 'run'" class="spin" style="font-size:10px">↻</span>
+                  <span v-else-if="s.state === 'err'" style="font-size:10px">✕</span>
+                </span>
+                <span class="fs-13 text-0">{{ s.label }}</span>
+                <span class="mono fs-11 text-3" style="margin-left:auto">
+                  <span v-if="s.state === 'run' && s.pct !== null">{{ s.pct }}%</span>
+                  <span v-else-if="s.detail">{{ s.detail }}</span>
+                </span>
+              </div>
+              <div v-if="s.state === 'run' && s.pct !== null"
+                style="margin:2px 0 6px 28px;height:4px;background:var(--bg-0);border-radius:2px;overflow:hidden">
+                <div :style="'width:' + s.pct + '%;height:100%;background:var(--accent);border-radius:2px;transition:width .15s linear'"></div>
+              </div>
+            </template>
             <button
               class="btn btn-ghost btn-sm"
               style="align-self:flex-start;margin-top:8px;font-size:11px"
