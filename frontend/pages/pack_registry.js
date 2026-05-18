@@ -362,6 +362,15 @@ export default {
     const installSteps = ref(INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' })))
     const installSummary = ref(null)
 
+    const SERVER_PACK_STEPS = ['Download pack', 'Build server pack', 'Save to folder']
+    const showServerModal = ref(false)
+    const serverModalStep = ref(1)
+    const serverDest = ref('')
+    const serverAsZip = ref(true)
+    const serverIncludeConfig = ref(true)
+    const serverProgress = ref(SERVER_PACK_STEPS.map(l => ({ label: l, state: 'idle', detail: '' })))
+    const serverSummary = ref(null)
+
     const loadPacks = async () => {
       if (!browseRepoId.value) return
       packsLoading.value = true
@@ -512,6 +521,46 @@ export default {
       await doInstall({ ...clientInstallParams.value, excluded_mods: excluded })
     }
 
+    const openServerModal = async () => {
+      serverModalStep.value = 1
+      serverAsZip.value = true
+      serverIncludeConfig.value = true
+      serverProgress.value = SERVER_PACK_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
+      serverSummary.value = null
+      try {
+        await window.__apiReady
+        serverDest.value = await window.pywebview.api.get_downloads_folder()
+      } catch(e) { serverDest.value = '' }
+      showServerModal.value = true
+    }
+
+    const pickServerFolder = async () => {
+      try {
+        await window.__apiReady
+        const folder = await window.pywebview.api.pick_folder()
+        if (folder) serverDest.value = folder
+      } catch(e) {}
+    }
+
+    const startServerDownload = async () => {
+      serverModalStep.value = 3
+      serverProgress.value = SERVER_PACK_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
+      serverSummary.value = null
+      try {
+        await window.__apiReady
+        await window.pywebview.api.download_server_pack({
+          repo_id: browseRepoId.value,
+          pack_name: selectedPack.value,
+          version: selectedVersionObj.value.version,
+          dest_folder: serverDest.value,
+          as_zip: serverAsZip.value,
+          include_config: serverIncludeConfig.value,
+        })
+      } catch(e) {
+        serverSummary.value = { tone: 'error', text: String(e) }
+      }
+    }
+
     const confirmConflictInstall = async () => {
       showConflictModal.value = false
       const skip = conflictGroups.value.flatMap(g => g.files.filter(f => f.keep).map(f => f.path))
@@ -559,6 +608,18 @@ export default {
     const _baseHandler = window.__onProgress
     window.__onProgress = (event) => {
       if (_baseHandler) _baseHandler(event)
+
+      if (event.type === 'server_pack') {
+        if (event.step !== undefined && serverProgress.value[event.step]) {
+          serverProgress.value[event.step].state = event.state === 'ok' ? 'done' : event.state === 'error' ? 'err' : 'run'
+          serverProgress.value[event.step].detail = event.detail || ''
+        }
+        return
+      }
+      if (event.type === 'server_pack_summary') {
+        serverSummary.value = { tone: event.tone, text: event.text }
+        return
+      }
 
       // Route to per-instance progress when on instances tab and an instance op is active
       if (tab.value === 'instances') {
@@ -626,6 +687,9 @@ export default {
       showConflictModal, conflictGroups, conflictInstallParams, confirmConflictInstall, trackOnInstall,
       showClientModModal, clientModList, clientModAllSelected,
       toggleAllClientMods, confirmClientModInstall,
+      showServerModal, serverModalStep, serverDest, serverAsZip, serverIncludeConfig,
+      serverProgress, serverSummary, SERVER_PACK_STEPS,
+      openServerModal, pickServerFolder, startServerDownload,
       installMode, installInstanceName, installExistingInstance,
       installSteps, installSummary, INSTALL_STEPS,
       installing, installPack, selectPack, selectVersion, checkAndInstall, modDiff,
@@ -1007,9 +1071,14 @@ export default {
                 <div class="card-body" style="display:flex;flex-direction:column;gap:14px">
 
                   <!-- Mode toggle -->
-                  <div style="display:flex;gap:8px">
-                    <button :class="['btn', 'btn-sm', installMode === 'new' ? 'btn-primary' : 'btn-ghost']" @click="installMode = 'new'">Create new instance</button>
-                    <button :class="['btn', 'btn-sm', installMode === 'existing' ? 'btn-primary' : 'btn-ghost']" @click="installMode = 'existing'">Install to existing</button>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">
+                    <div style="display:flex;gap:8px">
+                      <button :class="['btn', 'btn-sm', installMode === 'new' ? 'btn-primary' : 'btn-ghost']" @click="installMode = 'new'">Create new instance</button>
+                      <button :class="['btn', 'btn-sm', installMode === 'existing' ? 'btn-primary' : 'btn-ghost']" @click="installMode = 'existing'">Install to existing</button>
+                    </div>
+                    <button class="btn btn-ghost btn-sm flex items-center gap-6" @click="openServerModal">
+                      <span v-html="icon('download', 12)"></span> Download server pack
+                    </button>
                   </div>
 
                   <!-- New instance name -->
@@ -1296,6 +1365,92 @@ export default {
               <div style="display:flex;gap:8px">
                 <button class="btn btn-ghost btn-sm" @click="showClientModModal = false">Cancel</button>
                 <button class="btn btn-primary btn-sm" @click="confirmClientModInstall">Install</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </teleport>
+
+      <!-- ─── SERVER DOWNLOAD MODAL ─────────────────────────────────────────────── -->
+      <teleport to="body">
+        <div v-if="showServerModal"
+          style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px">
+          <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:520px;display:flex;flex-direction:column;overflow:hidden">
+
+            <!-- Header -->
+            <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line)">
+              <div class="fw-600 text-0" style="font-size:15px;margin-bottom:4px">Download server pack</div>
+              <div class="fs-12 text-3">
+                Step {{ serverModalStep }} of 2
+                <span v-if="serverModalStep < 3"> — {{ serverModalStep === 1 ? 'Destination' : 'Content' }}</span>
+                <span v-else> — Downloading</span>
+              </div>
+            </div>
+
+            <!-- Step 1: Destination -->
+            <div v-if="serverModalStep === 1" style="padding:20px 24px;display:flex;flex-direction:column;gap:16px">
+              <div>
+                <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Save to folder</div>
+                <div style="display:flex;gap:8px">
+                  <input v-model="serverDest" class="input input-mono" style="flex:1" placeholder="Choose folder…">
+                  <button class="btn btn-ghost btn-sm" @click="pickServerFolder">Browse…</button>
+                </div>
+              </div>
+              <div>
+                <div class="fs-12 text-2 fw-500" style="margin-bottom:8px">Format</div>
+                <div style="display:flex;gap:8px">
+                  <button :class="['btn', 'btn-sm', serverAsZip ? 'btn-primary' : 'btn-ghost']" @click="serverAsZip = true">Save as zip</button>
+                  <button :class="['btn', 'btn-sm', !serverAsZip ? 'btn-primary' : 'btn-ghost']" @click="serverAsZip = false">Extract to folder</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Step 2: Content -->
+            <div v-if="serverModalStep === 2" style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+              <div style="padding:10px 12px;background:var(--bg-0);border:1px solid var(--line);border-radius:6px">
+                <div class="fs-12 fw-500 text-0">Required + server-side mods</div>
+                <div class="fs-12 text-3 mt-4">Always included</div>
+              </div>
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 12px;background:var(--bg-0);border:1px solid var(--line);border-radius:6px">
+                <input type="checkbox" v-model="serverIncludeConfig" style="width:14px;height:14px;cursor:pointer">
+                <div>
+                  <div class="fs-12 fw-500 text-0">Config files</div>
+                  <div class="fs-12 text-3 mt-4">Include the config/ folder</div>
+                </div>
+              </label>
+              <div class="fs-12 text-3" style="padding:0 2px">
+                Saves, resource packs, and shader packs are excluded from server packs.
+              </div>
+            </div>
+
+            <!-- Step 3: Progress -->
+            <div v-if="serverModalStep === 3" style="padding:16px 24px;display:flex;flex-direction:column;gap:4px">
+              <div v-for="(s, i) in serverProgress" :key="i" class="progress-step">
+                <span class="progress-step-icon" :class="s.state">
+                  <span v-if="s.state==='done'" v-html="icon('check',10)"></span>
+                  <span v-else-if="s.state==='run'" class="spin" v-html="icon('spin',10)"></span>
+                  <span v-else-if="s.state==='err'" v-html="icon('x',10)"></span>
+                </span>
+                <span class="fs-13 text-0">{{ s.label }}</span>
+                <span v-if="s.detail" class="mono fs-11 text-3" style="margin-left:auto">{{ s.detail }}</span>
+              </div>
+              <div v-if="serverSummary" style="margin-top:10px;padding:10px 12px;border-radius:6px;font-size:12px;font-weight:500;word-break:break-all"
+                :style="serverSummary.tone==='ok' ? 'background:var(--ok-soft);color:var(--ok)' : 'background:var(--err-soft);color:var(--err)'">
+                {{ serverSummary.tone === 'ok' ? 'Saved to: ' : '' }}{{ serverSummary.text }}
+              </div>
+            </div>
+
+            <!-- Footer -->
+            <div style="padding:16px 24px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <button v-if="serverModalStep === 2" class="btn btn-ghost btn-sm" @click="serverModalStep = 1">← Back</button>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button v-if="serverModalStep < 3" class="btn btn-ghost btn-sm" @click="showServerModal = false">Cancel</button>
+                <button v-if="serverModalStep === 1" class="btn btn-primary btn-sm" :disabled="!serverDest" @click="serverModalStep = 2">Next →</button>
+                <button v-if="serverModalStep === 2" class="btn btn-primary btn-sm" @click="startServerDownload">Confirm &amp; Download</button>
+                <button v-if="serverModalStep === 3 && serverSummary" class="btn btn-ghost btn-sm" @click="showServerModal = false">Close</button>
               </div>
             </div>
 
