@@ -128,15 +128,15 @@ const App = {
     const resetConfirm = ref(null)
     const resetResult = ref({})
 
-    const confirmReset = async () => {
-      if (resetConfirm.value !== 'RESET') return
+    const confirmReset = async (module) => {
       try {
         await window.__apiReady
-        const result = await window.pywebview.api.reset_state()
-        resetResult.value = result
+        const r = await window.pywebview.api.reset_module(module)
+        resetResult.value = { ...resetResult.value, [module]: r.ok ? 'ok' : 'error' }
       } catch(e) {
-        resetResult.value = { error: String(e) }
+        resetResult.value = { ...resetResult.value, [module]: 'error' }
       }
+      resetConfirm.value = null
     }
 
     const updateStream = ref('alpha')
@@ -353,16 +353,25 @@ const App = {
             </div>
 
             <div>
-              <div class="kicker" style="margin-bottom:10px">Danger Zone</div>
-              <div style="padding:12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
-                <div class="fs-13 fw-500 text-0" style="margin-bottom:6px">Reset App State</div>
-                <div class="fs-12 text-3" style="margin-bottom:10px">Clears all saved configuration. Type RESET to confirm.</div>
-                <div style="display:flex;gap:8px">
-                  <input v-model="resetConfirm" class="input" placeholder="Type RESET" style="font-size:12px;flex:1">
-                  <button class="btn btn-ghost btn-sm" style="color:var(--text-err,#f87171);border-color:var(--text-err,#f87171)" :disabled="resetConfirm !== 'RESET'" @click="confirmReset">Reset</button>
-                </div>
-                <div v-if="resetResult.ok" class="fs-12" style="margin-top:8px;color:var(--text-ok,#4ade80)">State reset successfully.</div>
-                <div v-if="resetResult.error" class="fs-12" style="margin-top:8px;color:var(--text-err,#f87171)">{{ resetResult.error }}</div>
+              <div class="kicker" style="margin-bottom:10px">Reset Module Data</div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <template v-for="mod in ['schematic_sync','instance_sync','pack_registry']" :key="mod">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
+                    <div>
+                      <div class="fs-13 fw-500 text-0">{{ mod.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) }}</div>
+                      <div v-if="resetResult[mod] === 'ok'" class="fs-12" style="color:var(--ok)">Reset complete</div>
+                      <div v-else-if="resetResult[mod] === 'error'" class="fs-12" style="color:var(--err)">Reset failed</div>
+                    </div>
+                    <template v-if="resetConfirm === mod">
+                      <div class="flex items-center gap-6">
+                        <span class="fs-12 text-2">Sure?</span>
+                        <button class="btn btn-sm" style="background:var(--err);border-color:var(--err);color:#fff;font-size:11px" @click="confirmReset(mod)">Yes, reset</button>
+                        <button class="btn btn-ghost btn-sm" style="font-size:11px" @click="resetConfirm = null">Cancel</button>
+                      </div>
+                    </template>
+                    <button v-else class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--err);border-color:var(--err)" @click="resetConfirm = mod">Reset</button>
+                  </div>
+                </template>
               </div>
             </div>
           </div>
