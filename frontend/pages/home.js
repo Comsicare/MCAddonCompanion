@@ -455,7 +455,7 @@ export default {
                 </div>
                 <div class="toggle-track"
                   :class="[settingsModal.form.hook_enabled ? 'on' : 'off', !data.instance_sync_configured ? 'disabled-hint' : '']"
-                  @click="if(data.instance_sync_configured) settingsModal.form.hook_enabled = !settingsModal.form.hook_enabled"
+                  @click="data.instance_sync_configured && (settingsModal.form.hook_enabled = !settingsModal.form.hook_enabled)"
                   style="flex:none">
                   <div class="toggle-thumb"></div>
                 </div>
@@ -486,7 +486,7 @@ export default {
                     </div>
                     <div class="toggle-track"
                       :class="[settingsModal.form.exit_sync ? 'on' : 'off', !data.instance_sync_configured ? 'disabled-hint' : '']"
-                      @click="if(data.instance_sync_configured) settingsModal.form.exit_sync = !settingsModal.form.exit_sync"
+                      @click="data.instance_sync_configured && (settingsModal.form.exit_sync = !settingsModal.form.exit_sync)"
                       style="flex:none;transform:scale(0.85);transform-origin:right center">
                       <div class="toggle-thumb"></div>
                     </div>
@@ -498,7 +498,7 @@ export default {
                     </div>
                     <div class="toggle-track"
                       :class="[settingsModal.form.startup_sync ? 'on' : 'off', !data.instance_sync_configured ? 'disabled-hint' : '']"
-                      @click="if(data.instance_sync_configured) settingsModal.form.startup_sync = !settingsModal.form.startup_sync"
+                      @click="data.instance_sync_configured && (settingsModal.form.startup_sync = !settingsModal.form.startup_sync)"
                       style="flex:none;transform:scale(0.85);transform-origin:right center">
                       <div class="toggle-thumb"></div>
                     </div>
