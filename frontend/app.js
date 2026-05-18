@@ -100,7 +100,31 @@ const App = {
       checkingUpdate.value = false
     }
 
-    const openDebugModal = () => {}  // implemented in Task 3
+    const showDebugModal = ref(false)
+    const hostInfo = ref(null)
+    const resetConfirm = ref(null)   // null | 'schematic_sync' | 'instance_sync' | 'pack_registry'
+    const resetResult = ref({})      // { [module]: 'ok' | 'error' }
+
+    const openDebugModal = async () => {
+      resetConfirm.value = null
+      resetResult.value = {}
+      showDebugModal.value = true
+      try {
+        await window.__apiReady
+        hostInfo.value = await window.pywebview.api.get_host_info()
+      } catch(e) { hostInfo.value = null }
+    }
+
+    const confirmReset = async (module) => {
+      try {
+        await window.__apiReady
+        const r = await window.pywebview.api.reset_module(module)
+        resetResult.value = { ...resetResult.value, [module]: r.ok ? 'ok' : 'error' }
+      } catch(e) {
+        resetResult.value = { ...resetResult.value, [module]: 'error' }
+      }
+      resetConfirm.value = null
+    }
 
     window.__onProgress = (event) => {
       if (event.type === 'app_update') {
@@ -132,7 +156,8 @@ const App = {
       page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate,
       NAV, PAGES, icon, isUpdatePrompt, UpdatePromptPage,
       showMenu, toggleMenu, closeMenu,
-      showVersionModal, checkingUpdate, manualUpdateResult, openVersionModal, checkUpdateManual, openDebugModal,
+      showVersionModal, checkingUpdate, manualUpdateResult, openVersionModal, checkUpdateManual,
+      showDebugModal, hostInfo, resetConfirm, resetResult, openDebugModal, confirmReset,
     }
   },
   template: `
@@ -244,6 +269,74 @@ const App = {
                 </button>
               </div>
               <div v-if="manualUpdateResult === 'error'" class="fs-12" style="color:var(--err)">Check failed — verify your connection.</div>
+            </div>
+          </div>
+        </div>
+      </teleport>
+
+      <!-- Help & Debug modal -->
+      <teleport to="body">
+        <div v-if="showDebugModal"
+          style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px"
+          @mousedown.self="showDebugModal = false">
+          <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden">
+
+            <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex:none">
+              <div class="fw-600 text-0" style="font-size:15px">Help &amp; Debug</div>
+              <button class="icon-btn" @click="showDebugModal = false"><span v-html="icon('x',13)"></span></button>
+            </div>
+
+            <div style="overflow-y:auto;flex:1;padding:20px 24px;display:flex;flex-direction:column;gap:20px">
+
+              <!-- Host info -->
+              <div>
+                <div class="kicker" style="margin-bottom:10px">Host Information</div>
+                <div v-if="hostInfo" style="display:flex;flex-direction:column;gap:6px">
+                  <div v-for="(val, key) in hostInfo" :key="key"
+                    style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)">
+                    <span class="fs-12 text-2">{{ key }}</span>
+                    <span class="mono fs-12 text-0" style="max-width:60%;text-align:right;word-break:break-all">{{ val }}</span>
+                  </div>
+                </div>
+                <div v-else class="fs-13 text-3">Loading…</div>
+              </div>
+
+              <!-- Module resets -->
+              <div>
+                <div class="kicker" style="margin-bottom:10px">Reset Module Data</div>
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  <template v-for="mod in ['schematic_sync','instance_sync','pack_registry']" :key="mod">
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
+                      <div>
+                        <div class="fs-13 fw-500 text-0">{{ mod.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) }}</div>
+                        <div v-if="resetResult[mod] === 'ok'" class="fs-12" style="color:var(--ok)">Reset complete</div>
+                        <div v-else-if="resetResult[mod] === 'error'" class="fs-12" style="color:var(--err)">Reset failed</div>
+                      </div>
+                      <template v-if="resetConfirm === mod">
+                        <div class="flex items-center gap-6">
+                          <span class="fs-12 text-2">Sure?</span>
+                          <button class="btn btn-sm" style="background:var(--err);border-color:var(--err);color:#fff;font-size:11px" @click="confirmReset(mod)">Yes, reset</button>
+                          <button class="btn btn-ghost btn-sm" style="font-size:11px" @click="resetConfirm = null">Cancel</button>
+                        </div>
+                      </template>
+                      <button v-else class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--err);border-color:var(--err)" @click="resetConfirm = mod">Reset</button>
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Debug upload (coming soon) -->
+              <div>
+                <div class="kicker" style="margin-bottom:10px">Diagnostics</div>
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
+                  <div>
+                    <div class="fs-13 fw-500 text-0">Upload Debug Data</div>
+                    <div class="fs-12 text-3">Logs and diagnostics — coming soon</div>
+                  </div>
+                  <button class="btn btn-ghost btn-sm" style="font-size:11px" disabled title="Coming soon">Upload</button>
+                </div>
+              </div>
+
             </div>
           </div>
         </div>
