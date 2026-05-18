@@ -718,7 +718,8 @@ export default {
 
       const flow = event.flow
       if (flow === 'install') {
-        routeToModal(installModal, event)
+        const target = updateModal.value.show ? updateModal : installModal
+        routeToModal(target, event)
         if (event.type === 'summary' && event.tone === 'ok') loadInstalledInstances()
         return
       }
