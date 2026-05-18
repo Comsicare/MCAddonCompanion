@@ -67,6 +67,41 @@ const App = {
     const updateDismissed = ref(false)
     const appUpdateState = ref(null)  // null | {state:'downloading'|'installing'|'done'|'error', pct:0-100}
 
+    const showMenu = ref(false)
+    const showVersionModal = ref(false)
+    const checkingUpdate = ref(false)
+    const manualUpdateResult = ref(null) // null | 'ok' | 'none' | 'error'
+
+    const toggleMenu = () => { showMenu.value = !showMenu.value }
+    const closeMenu = () => { showMenu.value = false }
+
+    const openVersionModal = () => {
+      showMenu.value = false
+      manualUpdateResult.value = null
+      showVersionModal.value = true
+    }
+
+    const checkUpdateManual = async () => {
+      checkingUpdate.value = true
+      manualUpdateResult.value = null
+      try {
+        await window.__apiReady
+        const info = await window.pywebview.api.check_update()
+        if (info) {
+          updateInfo.value = info
+          updateDismissed.value = false
+          manualUpdateResult.value = 'ok'
+        } else {
+          manualUpdateResult.value = 'none'
+        }
+      } catch(e) {
+        manualUpdateResult.value = 'error'
+      }
+      checkingUpdate.value = false
+    }
+
+    const openDebugModal = () => {}  // implemented in Task 3
+
     window.__onProgress = (event) => {
       if (event.type === 'app_update') {
         appUpdateState.value = { state: event.state, pct: event.pct }
@@ -93,7 +128,12 @@ const App = {
       )
     }
 
-    return { page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate, NAV, PAGES, icon, isUpdatePrompt, UpdatePromptPage }
+    return {
+      page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate,
+      NAV, PAGES, icon, isUpdatePrompt, UpdatePromptPage,
+      showMenu, toggleMenu, closeMenu,
+      showVersionModal, checkingUpdate, manualUpdateResult, openVersionModal, checkUpdateManual, openDebugModal,
+    }
   },
   template: `
     <template v-if="isUpdatePrompt">
@@ -140,15 +180,74 @@ const App = {
               </button>
             </div>
           </template>
-          <button class="icon-btn" title="Menu">
-            <span v-html="icon('dots', 15)"></span>
-          </button>
+          <div class="dropdown-wrap" v-click-outside="closeMenu">
+            <button class="icon-btn" :class="{ active: showMenu }" title="Menu" @click="toggleMenu">
+              <span v-html="icon('dots', 15)"></span>
+            </button>
+            <div v-if="showMenu" class="dropdown-panel">
+              <button class="dropdown-item" @click="page = 'instance_sync'; closeMenu()">
+                <span v-html="icon('settings', 14)"></span> Settings
+              </button>
+              <div class="dropdown-sep"></div>
+              <button class="dropdown-item" @click="openVersionModal">
+                <span v-html="icon('bell', 14)"></span> Version &amp; Updates
+              </button>
+              <button class="dropdown-item" @click="openDebugModal(); closeMenu()">
+                <span v-html="icon('alert', 14)"></span> Help &amp; Debug
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
       <div class="app-content">
         <component :is="PAGES[page]" :progress="progress" @navigate="page = $event" />
       </div>
+
+      <!-- Version & Updates modal -->
+      <teleport to="body">
+        <div v-if="showVersionModal"
+          style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px"
+          @mousedown.self="showVersionModal = false">
+          <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:420px;overflow:hidden">
+            <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
+              <div class="fw-600 text-0" style="font-size:15px">Version &amp; Updates</div>
+              <button class="icon-btn" @click="showVersionModal = false"><span v-html="icon('x',13)"></span></button>
+            </div>
+            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:16px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span class="text-2 fs-13">Current version</span>
+                <span class="mono fw-600 text-0">{{ version ? 'v' + version : '—' }}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span class="text-2 fs-13">Status</span>
+                <span v-if="updateInfo && !updateDismissed" class="pill pill-warn">Update available — v{{ updateInfo.version }}</span>
+                <span v-else-if="manualUpdateResult === 'none'" class="pill pill-ok">Up to date</span>
+                <span v-else class="pill pill-off">—</span>
+              </div>
+              <template v-if="updateInfo && !updateDismissed">
+                <button class="btn btn-primary btn-sm flex items-center gap-6"
+                  :disabled="!!appUpdateState"
+                  @click="startUpdate">
+                  <span v-if="appUpdateState && appUpdateState.state==='downloading'" v-html="icon('spin',13)"></span>
+                  <span v-else v-html="icon('download',13)"></span>
+                  {{ appUpdateState ? (appUpdateState.state === 'downloading' ? appUpdateState.pct + '%' : appUpdateState.state) : 'Install update' }}
+                </button>
+              </template>
+              <div style="border-top:1px solid var(--line);padding-top:16px;display:flex;justify-content:flex-end">
+                <button class="btn btn-ghost btn-sm flex items-center gap-6"
+                  :disabled="checkingUpdate"
+                  @click="checkUpdateManual">
+                  <span v-if="checkingUpdate" v-html="icon('spin',13)"></span>
+                  <span v-else v-html="icon('refresh',13)"></span>
+                  {{ checkingUpdate ? 'Checking…' : 'Check for updates' }}
+                </button>
+              </div>
+              <div v-if="manualUpdateResult === 'error'" class="fs-12" style="color:var(--err)">Check failed — verify your connection.</div>
+            </div>
+          </div>
+        </div>
+      </teleport>
 
       <footer class="footer">
         <div class="flex items-center gap-14">
@@ -167,6 +266,18 @@ const App = {
   `
 }
 
-createApp(App)
+const app = createApp(App)
   .component('update-prompt-page', UpdatePromptPage)
-  .mount('#app')
+
+app.directive('click-outside', {
+  mounted(el, binding) {
+    el.__clickOutside = (e) => { if (!el.contains(e.target)) binding.value(e) }
+    document.addEventListener('mousedown', el.__clickOutside)
+  },
+  unmounted(el) {
+    document.removeEventListener('mousedown', el.__clickOutside)
+    delete el.__clickOutside
+  },
+})
+
+app.mount('#app')
