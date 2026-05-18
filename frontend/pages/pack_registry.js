@@ -213,6 +213,7 @@ export default {
       categories: { mods: true, config: true, resourcepacks: false, shaderpacks: false, saves: false, schematics: false },
     })
     const modFiles = ref([])  // [{file: string, side: string}]
+    const publishRemovedMods = ref([])  // mods that will be in removed_mods on publish
     const publishSteps = computed(() => {
       const p = props.progress || {}
       return PUBLISH_STEPS.map((label, i) => {
@@ -273,6 +274,7 @@ export default {
         // Start with defaults, then overlay tags from previous version if pack is selected
         const tagged = files.map(f => ({ file: f, side: 'required', excluded: false }))
         modFiles.value = tagged
+        publishRemovedMods.value = []
         const packName = publishForm.value.pack_name
         const repoId = publishForm.value.repo_id
         if (packName && repoId && !packNameIsNew.value) {
@@ -285,6 +287,7 @@ export default {
               // files not in previous mods list were excluded (not in metadata = excluded or new)
               // only auto-exclude if they were present before but removed (i.e., in removed_mods)
               ;(prevMeta.removed_mods || []).forEach(f => excludedSet.add(f))
+              publishRemovedMods.value = prevMeta.removed_mods || []
               modFiles.value = tagged.map(m => ({
                 ...m,
                 side: sideMap[m.file] || 'required',
@@ -593,6 +596,59 @@ export default {
       if (wasOk) loadInstalledInstances()
     }
 
+    const openPublishModal = () => {
+      const f = publishForm.value
+      const currentFiles = new Set(modFiles.value.filter(m => !m.excluded).map(m => m.file))
+      const deletions = publishRemovedMods.value.filter(file => !currentFiles.has(file))
+      publishModal.value = {
+        show: true, phase: 'summary', done: false, error: false,
+        title: 'Publish Pack',
+        summary: `${f.pack_name} v${f.version} from ${f.instance_name}`,
+        deletions,
+        steps: PUBLISH_STEPS.map(l => ({ label: l, state: 'idle', detail: '' })),
+        logs: [],
+      }
+    }
+
+    const confirmPublish = async () => {
+      publishModal.value.phase = 'progress'
+      const f = publishForm.value
+      const mod_tags = {}
+      modFiles.value.forEach(m => { if (!m.excluded) mod_tags[m.file] = m.side })
+      try {
+        await window.__apiReady
+        await window.pywebview.api.publish_pack({
+          repo_id: f.repo_id,
+          instance_name: f.instance_name,
+          pack_name: f.pack_name,
+          version: f.version,
+          description: f.description,
+          changenotes: f.changenotes,
+          mc_version: f.mc_version,
+          loader: f.loader,
+          loader_version: f.loader_version,
+          categories: f.categories,
+          mod_tags,
+        })
+      } catch(e) {
+        publishModal.value.done = true
+        publishModal.value.error = true
+        publishModal.value.logs.push(`Error: ${e}`)
+      }
+    }
+
+    const retryPublish = async () => {
+      publishModal.value.steps = PUBLISH_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
+      publishModal.value.logs = []
+      publishModal.value.done = false
+      publishModal.value.error = false
+      await confirmPublish()
+    }
+
+    const closePublishModal = () => {
+      publishModal.value = _makeModal()
+    }
+
     const openServerModal = async () => {
       serverModalStep.value = 1
       serverAsZip.value = true
@@ -720,6 +776,7 @@ export default {
       tab, icon,
       installModal, publishModal, updateModal, routeToModal, ActionModal,
       openInstallModal, confirmInstall, retryInstall, closeInstallModal,
+      publishRemovedMods, openPublishModal, confirmPublish, retryPublish, closePublishModal,
       // repos
       repos, reposLoading, selectedRepo, repoForm, repoSaving, repoError, repoSuccess,
       testResult, testLoading,
@@ -852,7 +909,7 @@ export default {
 
       <!-- ─── PUBLISH TAB ────────────────────────────────────────────────────── -->
       <template v-else-if="tab === 'publish'">
-        <div style="display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:start">
+        <div style="display:grid;grid-template-columns:1fr;gap:16px;align-items:start">
           <!-- Publish form -->
           <div class="card">
             <div class="card-header">
@@ -970,54 +1027,14 @@ export default {
                   </div>
                 </div>
               </template>
-            </div>
-          </div>
 
-          <!-- Progress panel -->
-          <div style="display:flex;flex-direction:column;gap:12px">
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title" style="margin-top:0">Progress</div>
-              </div>
-              <div class="card-body" style="padding:8px">
-                <div v-for="(step, i) in publishSteps" :key="i" class="progress-step">
-                  <div :class="['progress-step-icon', stepIconState(step.state)]">
-                    <span v-if="step.state === 'ok'" v-html="icon('check', 10)"></span>
-                    <span v-else-if="step.state === 'running'" class="spin" v-html="icon('spin', 10)"></span>
-                    <span v-else-if="step.state === 'error'" v-html="icon('x', 10)"></span>
-                  </div>
-                  <div style="flex:1;min-width:0">
-                    <div class="fs-13 text-0">{{ step.label }}</div>
-                    <div v-if="step.detail" class="mono fs-12 text-2 mt-4">{{ step.detail }}</div>
-                  </div>
-                </div>
-
-                <div v-if="publishSummary" style="margin-top:8px;padding:8px 10px;border-radius:6px"
-                  :style="publishTone==='ok' ? 'background:var(--ok-soft);color:var(--ok)' : 'background:var(--err-soft);color:var(--err)'">
-                  <span class="fs-12 fw-500">{{ publishSummary }}</span>
-                </div>
-              </div>
-              <div style="padding:12px 16px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px">
-                <button class="btn btn-ghost btn-sm flex items-center gap-6">
-                  <span v-html="icon('external', 12)"></span> View on GitLab
-                </button>
+              <div style="display:flex;justify-content:flex-end;padding-top:8px">
                 <button class="btn btn-primary btn-sm flex items-center gap-6"
-                  :disabled="publishing || !publishForm.repo_id || !publishForm.instance_name || !publishForm.pack_name || !publishForm.version"
-                  @click="publish">
-                  <span :class="publishing ? 'spin' : ''" v-html="icon('download', 12)"></span>
-                  {{ publishing ? 'Publishing…' : 'Publish pack' }}
+                  :disabled="!publishForm.repo_id || !publishForm.instance_name || !publishForm.pack_name || !publishForm.version"
+                  @click="openPublishModal">
+                  <span v-html="icon('download', 12)"></span>
+                  Publish pack
                 </button>
-              </div>
-            </div>
-
-            <!-- Summary tags -->
-            <div v-if="publishSummary" class="card">
-              <div class="card-body" style="display:flex;flex-wrap:wrap;gap:6px">
-                <span class="tag">{{ publishForm.pack_name || publishForm.instance_name }}</span>
-                <span class="tag" v-if="publishForm.version">v{{ publishForm.version }}</span>
-                <span v-for="(val, key) in publishForm.categories" :key="key" v-if="val" class="tag">{{ key }}</span>
-                <span v-if="publishForm.mc_version" class="tag">{{ publishForm.mc_version }}</span>
-                <span v-if="publishForm.loader" class="tag">{{ publishForm.loader }}</span>
               </div>
             </div>
           </div>
@@ -1308,6 +1325,22 @@ export default {
         @confirm="confirmInstall"
         @cancel="closeInstallModal"
         @retry="retryInstall"
+      />
+
+      <!-- ─── PUBLISH ACTION MODAL ──────────────────────────────────────────────── -->
+      <action-modal
+        :show="publishModal.show"
+        :title="publishModal.title"
+        :summary="publishModal.summary"
+        :deletions="publishModal.deletions"
+        :steps="publishModal.steps"
+        :logs="publishModal.logs"
+        :phase="publishModal.phase"
+        :done="publishModal.done"
+        :error="publishModal.error"
+        @confirm="confirmPublish"
+        @cancel="closePublishModal"
+        @retry="retryPublish"
       />
 
       <!-- ─── CONFLICT MODAL ───────────────────────────────────────────────────── -->
