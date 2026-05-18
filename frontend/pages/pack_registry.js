@@ -351,6 +351,9 @@ export default {
     const showConflictModal = ref(false)
     const conflictGroups = ref([])   // [{folder, files: [{path, keep}]}]
     const conflictInstallParams = ref(null)  // params to pass to install after resolution
+    const showClientModModal = ref(false)
+    const clientModList = ref([])   // [{ file, name, include }]
+    const _clientInstallParams = ref(null)
     const installMode = ref('new')         // 'new' | 'existing'
     const installInstanceName = ref('')
     const installExistingInstance = ref('')
@@ -464,7 +467,59 @@ export default {
           }
         } catch(e) {}
       }
-      installPack()
+      const instName = installMode.value === 'new'
+        ? installInstanceName.value
+        : installExistingInstance.value
+      openClientModReview({
+        repo_id: browseRepoId.value,
+        pack_name: selectedPack.value,
+        version: selectedVersionObj.value.version,
+        instance_name: instName,
+        mode: installMode.value,
+        track: trackOnInstall.value,
+        skip_files: [],
+      })
+    }
+
+    const openClientModReview = (params) => {
+      const mods = selectedVersionObj.value?.metadata?.mods || []
+      const clientMods = mods.filter(m => m.side === 'client')
+      if (!clientMods.length) {
+        // No client mods — proceed directly
+        doInstall(params)
+        return
+      }
+      clientModList.value = clientMods.map(m => ({
+        file: m.file,
+        name: m.file.replace(/\.jar$/i, ''),
+        include: true,
+      }))
+      _clientInstallParams.value = params
+      showClientModModal.value = true
+    }
+
+    const clientModAllSelected = computed(() =>
+      clientModList.value.every(m => m.include)
+    )
+
+    const toggleAllClientMods = (val) => {
+      clientModList.value.forEach(m => { m.include = val })
+    }
+
+    const confirmClientModInstall = async () => {
+      showClientModModal.value = false
+      const excluded = clientModList.value.filter(m => !m.include).map(m => m.file)
+      const params = { ..._clientInstallParams.value, excluded_mods: excluded }
+      installing.value = true
+      installSteps.value = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
+      installSummary.value = null
+      try {
+        await window.__apiReady
+        await window.pywebview.api.install_pack(params)
+      } catch(e) {
+        installSummary.value = { tone: 'error', text: String(e) }
+        installing.value = false
+      }
     }
 
     const confirmConflictInstall = async () => {
@@ -588,6 +643,8 @@ export default {
       browseRepoId, packs, packsLoading, selectedPack,
       packVersions, versionsLoading, selectedVersionObj,
       showConflictModal, conflictGroups, conflictInstallParams, confirmConflictInstall, trackOnInstall,
+      showClientModModal, clientModList, clientModAllSelected,
+      toggleAllClientMods, confirmClientModInstall,
       installMode, installInstanceName, installExistingInstance,
       installSteps, installSummary, INSTALL_STEPS,
       installing, installPack, selectPack, selectVersion, checkAndInstall, modDiff,
@@ -1209,6 +1266,58 @@ export default {
                 <button class="btn btn-primary btn-sm" @click="confirmConflictInstall">Install</button>
               </div>
             </div>
+          </div>
+        </div>
+      </teleport>
+
+      <!-- ─── CLIENT MOD REVIEW MODAL ──────────────────────────────────────────── -->
+      <teleport to="body">
+        <div v-if="showClientModModal"
+          style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px">
+          <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:560px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden">
+
+            <!-- Header -->
+            <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line);flex:none">
+              <div class="fw-600 text-0" style="font-size:15px;margin-bottom:4px">Client-only mods</div>
+              <div class="fs-13 text-2">These mods are client-side only. Deselect any you don't want installed.</div>
+            </div>
+
+            <!-- List -->
+            <div style="overflow-y:auto;flex:1;padding:16px 24px">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th style="width:32px">
+                      <input type="checkbox"
+                        :checked="clientModAllSelected"
+                        @change="toggleAllClientMods($event.target.checked)"
+                        style="width:13px;height:13px;cursor:pointer">
+                    </th>
+                    <th style="text-align:left">Mod</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="mod in clientModList" :key="mod.file" :style="!mod.include ? 'opacity:0.45' : ''">
+                    <td>
+                      <input type="checkbox" v-model="mod.include" style="width:13px;height:13px;cursor:pointer">
+                    </td>
+                    <td class="mono fs-12">{{ mod.name }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Footer -->
+            <div style="padding:16px 24px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;flex:none">
+              <div class="fs-12 text-3">
+                {{ clientModList.filter(m => m.include).length }} of {{ clientModList.length }} selected
+              </div>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-ghost btn-sm" @click="showClientModModal = false">Cancel</button>
+                <button class="btn btn-primary btn-sm" @click="confirmClientModInstall">Install</button>
+              </div>
+            </div>
+
           </div>
         </div>
       </teleport>
