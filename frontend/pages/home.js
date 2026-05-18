@@ -308,7 +308,7 @@ export default {
                     :class="settingsModal.form[row.key] ? 'on' : 'off'"
                     @click="settingsModal.form[row.key] = !settingsModal.form[row.key]"
                     style="flex:none">
-                    <div class="toggle-thumb" :style="settingsModal.form[row.key] ? 'left:14px' : 'left:1px'"></div>
+                    <div class="toggle-thumb"></div>
                   </div>
                 </div>
               </template>
@@ -324,7 +324,7 @@ export default {
                   :class="settingsModal.form.tracked ? 'on' : 'off'"
                   @click="settingsModal.form.tracked = !settingsModal.form.tracked"
                   style="flex:none">
-                  <div class="toggle-thumb" :style="settingsModal.form.tracked ? 'left:14px' : 'left:1px'"></div>
+                  <div class="toggle-thumb"></div>
                 </div>
               </div>
 
