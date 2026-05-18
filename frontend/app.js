@@ -226,10 +226,10 @@ const App = {
             </div>
           </template>
           <div style="position:relative">
-            <button class="icon-btn" title="Menu" @click="showMenu = !showMenu">
+            <button class="icon-btn" title="Menu" @click.stop="showMenu = !showMenu">
               <span v-html="icon('dots', 15)"></span>
             </button>
-            <div v-if="showMenu" style="position:absolute;right:0;top:calc(100% + 6px);background:var(--bg-1);border:1px solid var(--line);border-radius:8px;padding:4px;min-width:180px;z-index:200;box-shadow:0 4px 16px rgba(0,0,0,.3)">
+            <div v-if="showMenu" style="position:absolute;right:0;top:calc(100% + 6px);background:var(--bg-1);border:1px solid var(--line);border-radius:8px;padding:4px;min-width:180px;z-index:9998;box-shadow:0 4px 16px rgba(0,0,0,.3)">
               <button class="menu-item" style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;background:none;border:none;color:var(--text-0);cursor:pointer;border-radius:5px;font-size:13px;text-align:left" @click="openVersionModal">
                 <span v-html="icon('bell', 14)"></span> Version &amp; Updates
               </button>
@@ -241,7 +241,7 @@ const App = {
         </div>
       </header>
 
-      <div v-if="showMenu" style="position:fixed;inset:0;z-index:199" @click="showMenu = false"></div>
+      <div v-if="showMenu" style="position:fixed;inset:0;z-index:9997" @click="showMenu = false"></div>
 
       <div class="app-content">
         <component :is="PAGES[page]" :progress="progress" @navigate="page = $event" />
