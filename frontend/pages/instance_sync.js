@@ -372,7 +372,7 @@ export default {
                   <td>
                     <span class="mono fs-12 text-2" :title="inst.last_exit_sync || ''">{{ fmtDate(inst.last_exit_sync) }}</span>
                     <span v-if="inst.last_errors?.length" style="margin-left:6px;cursor:pointer;color:var(--warn)"
-                      :title="inst.last_errors.join('\n')"
+                      :title="inst.last_errors.join(' | ')"
                       @click="expandedError = expandedError === inst.name ? null : inst.name">⚠</span>
                   </td>
                   <td>
