@@ -9,6 +9,28 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
+class _ProgressReader:
+    """File-like wrapper that reports upload progress via a callback."""
+    def __init__(self, data: bytes, on_progress):
+        self._data = data
+        self._pos = 0
+        self._total = len(data)
+        self._on_progress = on_progress
+
+    def read(self, n=-1):
+        if n < 0:
+            chunk = self._data[self._pos:]
+        else:
+            chunk = self._data[self._pos:self._pos + n]
+        self._pos += len(chunk)
+        if self._total:
+            self._on_progress(self._pos, self._total)
+        return chunk
+
+    def __len__(self):
+        return self._total
+
+
 class GitLabError(Exception):
     pass
 
@@ -134,13 +156,16 @@ class GitLabClient:
         filename: str,
         data: bytes,
         content_type: str = "application/octet-stream",
+        on_progress=None,
     ) -> None:
         if not self.upload_token:
             raise GitLabError("No upload token configured.")
         url = f"{self._pkg_base()}/generic/{package_name}/{version}/{filename}"
-        req = urllib.request.Request(url, data=data, method="PUT")
+        upload_data = _ProgressReader(data, on_progress) if on_progress else data
+        req = urllib.request.Request(url, data=upload_data, method="PUT")
         req.add_header("DEPLOY-TOKEN", self.upload_token)
         req.add_header("Content-Type", content_type)
+        req.add_header("Content-Length", str(len(data)))
         req.add_header("User-Agent", "MCAddonCompanion")
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
@@ -159,15 +184,18 @@ class GitLabClient:
         version: str,
         filename: str,
         path: Path,
+        on_progress=None,
     ) -> None:
         """Upload file from disk using a Deploy Token."""
         if not self.upload_token:
             raise GitLabError("No upload token configured.")
         url = f"{self._pkg_base()}/generic/{package_name}/{version}/{filename}"
         data = path.read_bytes()
-        req = urllib.request.Request(url, data=data, method="PUT")
+        upload_data = _ProgressReader(data, on_progress) if on_progress else data
+        req = urllib.request.Request(url, data=upload_data, method="PUT")
         req.add_header("DEPLOY-TOKEN", self.upload_token)
         req.add_header("Content-Type", "application/octet-stream")
+        req.add_header("Content-Length", str(len(data)))
         req.add_header("User-Agent", "MCAddonCompanion")
         try:
             with urllib.request.urlopen(req, timeout=300) as resp:
