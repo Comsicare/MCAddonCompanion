@@ -344,7 +344,8 @@ export default {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="inst in filtered" :key="inst.name">
+                <template v-for="inst in filtered" :key="inst.name">
+                <tr>
                   <td>
                     <div class="flex items-center gap-10">
                       <div class="inst-avatar">{{ abbr(inst.name) }}</div>
@@ -406,11 +407,12 @@ export default {
                     </div>
                   </td>
                 </tr>
-                <tr v-if="expandedError === inst.name && inst.last_errors?.length" :key="inst.name + '-err'">
+                <tr v-if="expandedError === inst.name && inst.last_errors?.length">
                   <td colspan="7" style="padding:8px 16px;background:var(--err-soft)">
                     <div v-for="e in inst.last_errors" :key="e" class="fs-12" style="color:var(--err)">{{ e }}</div>
                   </td>
                 </tr>
+                </template>
                 <tr v-if="!filtered.length">
                   <td colspan="7" class="loading">No instances found</td>
                 </tr>
