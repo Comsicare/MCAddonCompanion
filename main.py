@@ -62,7 +62,7 @@ if not getattr(sys, "frozen", False):
 
 import webview
 
-from core.config import INSTANCES_DIR, VERSION
+from core.config import INSTANCES_DIR, VERSION, STATEFILE
 from core.prism import get_minecraft_dir, is_prism_running, patch_exit_commands, clear_exit_commands
 from core.state import (
     load_state, save_state,
@@ -234,6 +234,104 @@ class Api:
             })
         repos = get_pack_registry_repos()
         return {"instances": rows, "repos": repos}
+
+    def open_instances_folder(self) -> None:
+        import subprocess
+        path = INSTANCES_DIR
+        if not path.exists():
+            return
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", str(path)])
+        else:
+            # Linux/macOS: collect for future Linux compat pass
+            subprocess.Popen(["xdg-open", str(path)])
+
+    def get_instance_settings(self, instance_name: str) -> dict:
+        from core.state import get_tracked_packs
+        state = load_state()
+        autosync = state.get("schematic_sync", {}).get("autosync_instances", [])
+        hook_enabled = self.get_hook_status(instance_name)
+
+        tracked_map = {t["instance_name"]: t for t in get_tracked_packs()}
+        installed_map = {i["instance_name"]: i for i in get_installed_instances()}
+
+        cfg = get_instance_sync_config()
+        eff = get_instance_effective_settings(
+            {"defaults": cfg.get("defaults", {}), "instances": cfg.get("instances", {})},
+            instance_name
+        ) if is_instance_sync_configured() else {}
+
+        return {
+            "instance_name": instance_name,
+            "schematic_sync": instance_name in autosync,
+            "exit_sync": eff.get("exit_sync", False),
+            "startup_sync": eff.get("startup_sync", False),
+            "hook_enabled": hook_enabled,
+            "tracked": instance_name in tracked_map,
+            "installed": instance_name in installed_map,
+            "pack_name": installed_map.get(instance_name, {}).get("pack_name"),
+        }
+
+    def save_instance_settings(self, instance_name: str, settings: dict) -> dict:
+        """Apply all per-instance toggle changes atomically. Returns updated settings."""
+        # Schematic sync
+        self.set_autosync(instance_name, bool(settings.get("schematic_sync", False)))
+
+        # Instance sync hook (pre/post launch commands)
+        hook_desired = bool(settings.get("hook_enabled", False))
+        current_hook = self.get_hook_status(instance_name)
+        if hook_desired != current_hook:
+            self.set_instance_hook(instance_name, hook_desired)
+
+        # Pack tracking
+        if settings.get("installed"):
+            from core.state import add_tracked_pack, remove_tracked_pack
+            if settings.get("tracked"):
+                installed = next(
+                    (i for i in get_installed_instances() if i["instance_name"] == instance_name),
+                    None
+                )
+                if installed:
+                    add_tracked_pack({
+                        "instance_name": instance_name,
+                        "repo_id": installed["repo_id"],
+                        "pack_name": installed["pack_name"],
+                        "pack_slug": installed["pack_slug"],
+                        "installed_version": installed["installed_version"],
+                    })
+            else:
+                remove_tracked_pack(instance_name)
+
+        return self.get_instance_settings(instance_name)
+
+    def reset_module(self, module: str) -> dict:
+        """Clear state for a module. Returns {"ok": True} or {"ok": False, "error": str}."""
+        RESETABLE = {
+            "schematic_sync": lambda s: s.update({"schematic_sync": {"autosync_instances": []}}),
+            "instance_sync": lambda s: s.update({"instance_sync": {}}),
+            "pack_registry": lambda s: s.update({"pack_registry": {}, "tracked_packs": [], "installed_instances": []}),
+        }
+        if module not in RESETABLE:
+            return {"ok": False, "error": f"Unknown module: {module}"}
+        try:
+            state = load_state()
+            RESETABLE[module](state)
+            save_state(state)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def get_host_info(self) -> dict:
+        import platform
+        return {
+            "version": VERSION,
+            "python": sys.version.split()[0],
+            "platform": platform.system(),
+            "platform_version": platform.version(),
+            "instances_dir": str(INSTANCES_DIR),
+            "state_file": str(STATEFILE),
+            "frozen": getattr(sys, "frozen", False),
+        }
 
     def sync_instance(self, name: str, mode: str) -> None:
         plan = _plan_instance(name, mode)
