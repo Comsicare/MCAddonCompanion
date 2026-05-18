@@ -319,6 +319,11 @@ export default {
 
     const routeToModal = (modal, event) => {
       if (modal.value._cancelled) return
+      if (event.type === 'progress') {
+        const s = modal.value.steps[event.step]
+        if (s) s.pct = event.pct
+        return
+      }
       if (event.type === 'reset') {
         modal.value.steps = modal.value.steps.map(s => ({ ...s, state: 'idle', detail: '' }))
         modal.value.logs = []
@@ -327,6 +332,7 @@ export default {
         if (s) {
           s.state = event.state === 'ok' ? 'done' : event.state === 'error' ? 'err' : 'run'
           s.detail = event.detail || ''
+          if (event.state === 'ok' || event.state === 'error') s.pct = null
           const label = s.label
           const logLine = `[${label}] ${event.detail || s.state}`
           const existingIdx = modal.value.logs.findLastIndex(l => l.startsWith(`[${label}]`))
@@ -345,7 +351,7 @@ export default {
     const serverDest = ref('')
     const serverAsZip = ref(true)
     const serverIncludeConfig = ref(true)
-    const serverProgress = ref(SERVER_PACK_STEPS.map(l => ({ label: l, state: 'idle', detail: '' })))
+    const serverProgress = ref(SERVER_PACK_STEPS.map(l => ({ label: l, state: 'idle', detail: '', pct: null })))
     const serverSummary = ref(null)
 
     const loadPacks = async () => {
@@ -476,7 +482,7 @@ export default {
         title: 'Install Pack',
         summary: `${params.pack_name} v${params.version} → ${params.instance_name} (${mode})`,
         deletions: [...(skipFiles || []), ...(excludedMods || [])],
-        steps: INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' })),
+        steps: INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '', pct: null })),
         logs: [],
         _params: params,
       }
@@ -497,7 +503,7 @@ export default {
     }
 
     const retryInstall = async () => {
-      installModal.value.steps = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
+      installModal.value.steps = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '', pct: null }))
       installModal.value.logs = []
       installModal.value.done = false
       installModal.value.error = false
@@ -520,7 +526,7 @@ export default {
         title: 'Publish Pack',
         summary: `${f.pack_name} v${f.version} from ${f.instance_name}`,
         deletions,
-        steps: PUBLISH_STEPS.map(l => ({ label: l, state: 'idle', detail: '' })),
+        steps: PUBLISH_STEPS.map(l => ({ label: l, state: 'idle', detail: '', pct: null })),
         logs: [],
       }
     }
@@ -553,7 +559,7 @@ export default {
     }
 
     const retryPublish = async () => {
-      publishModal.value.steps = PUBLISH_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
+      publishModal.value.steps = PUBLISH_STEPS.map(l => ({ label: l, state: 'idle', detail: '', pct: null }))
       publishModal.value.logs = []
       publishModal.value.done = false
       publishModal.value.error = false
@@ -574,7 +580,7 @@ export default {
         title,
         summary,
         deletions: removedMods || [],
-        steps: INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' })),
+        steps: INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '', pct: null })),
         logs: [],
         _params: params,
       }
@@ -595,7 +601,7 @@ export default {
     }
 
     const retryUpdate = async () => {
-      updateModal.value.steps = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
+      updateModal.value.steps = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '', pct: null }))
       updateModal.value.logs = []
       updateModal.value.done = false
       updateModal.value.error = false
@@ -613,7 +619,7 @@ export default {
       serverModalStep.value = 1
       serverAsZip.value = true
       serverIncludeConfig.value = true
-      serverProgress.value = SERVER_PACK_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
+      serverProgress.value = SERVER_PACK_STEPS.map(l => ({ label: l, state: 'idle', detail: '', pct: null }))
       serverSummary.value = null
       try {
         await window.__apiReady
@@ -632,7 +638,7 @@ export default {
 
     const startServerDownload = async () => {
       serverModalStep.value = 3
-      serverProgress.value = SERVER_PACK_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
+      serverProgress.value = SERVER_PACK_STEPS.map(l => ({ label: l, state: 'idle', detail: '', pct: null }))
       serverSummary.value = null
       try {
         await window.__apiReady
@@ -690,10 +696,18 @@ export default {
     window.__onProgress = (event) => {
       if (_baseHandler) _baseHandler(event)
 
+      if (event.type === 'server_pack_progress') {
+        if (event.step !== undefined && serverProgress.value[event.step]) {
+          serverProgress.value[event.step].pct = event.pct
+        }
+        return
+      }
       if (event.type === 'server_pack') {
         if (event.step !== undefined && serverProgress.value[event.step]) {
-          serverProgress.value[event.step].state = event.state === 'ok' ? 'done' : event.state === 'error' ? 'err' : 'run'
-          serverProgress.value[event.step].detail = event.detail || ''
+          const sp = serverProgress.value[event.step]
+          sp.state = event.state === 'ok' ? 'done' : event.state === 'error' ? 'err' : 'run'
+          sp.detail = event.detail || ''
+          if (event.state === 'ok' || event.state === 'error') sp.pct = null
         }
         return
       }
@@ -1446,15 +1460,24 @@ export default {
 
             <!-- Step 3: Progress -->
             <div v-if="serverModalStep === 3" style="padding:16px 24px;display:flex;flex-direction:column;gap:4px">
-              <div v-for="(s, i) in serverProgress" :key="i" class="progress-step">
-                <span class="progress-step-icon" :class="s.state">
-                  <span v-if="s.state==='done'" v-html="icon('check',10)"></span>
-                  <span v-else-if="s.state==='run'" class="spin" v-html="icon('spin',10)"></span>
-                  <span v-else-if="s.state==='err'" v-html="icon('x',10)"></span>
-                </span>
-                <span class="fs-13 text-0">{{ s.label }}</span>
-                <span v-if="s.detail" class="mono fs-11 text-3" style="margin-left:auto">{{ s.detail }}</span>
-              </div>
+              <template v-for="(s, i) in serverProgress" :key="i">
+                <div class="progress-step">
+                  <span class="progress-step-icon" :class="s.state">
+                    <span v-if="s.state==='done'" v-html="icon('check',10)"></span>
+                    <span v-else-if="s.state==='run'" class="spin" v-html="icon('spin',10)"></span>
+                    <span v-else-if="s.state==='err'" v-html="icon('x',10)"></span>
+                  </span>
+                  <span class="fs-13 text-0">{{ s.label }}</span>
+                  <span class="mono fs-11 text-3" style="margin-left:auto">
+                    <span v-if="s.state === 'run' && s.pct !== null">{{ s.pct }}%</span>
+                    <span v-else-if="s.detail">{{ s.detail }}</span>
+                  </span>
+                </div>
+                <div v-if="s.state === 'run' && s.pct !== null"
+                  style="margin:2px 0 6px 28px;height:4px;background:var(--bg-0);border-radius:2px;overflow:hidden">
+                  <div :style="'width:' + s.pct + '%;height:100%;background:var(--accent);border-radius:2px;transition:width .15s linear'"></div>
+                </div>
+              </template>
               <div v-if="serverSummary" style="margin-top:10px;padding:10px 12px;border-radius:6px;font-size:12px;font-weight:500;word-break:break-all"
                 :style="serverSummary.tone==='ok' ? 'background:var(--ok-soft);color:var(--ok)' : 'background:var(--err-soft);color:var(--err)'">
                 {{ serverSummary.tone === 'ok' ? 'Saved to: ' : '' }}{{ serverSummary.text }}
