@@ -353,7 +353,7 @@ export default {
     const conflictInstallParams = ref(null)  // params to pass to install after resolution
     const showClientModModal = ref(false)
     const clientModList = ref([])   // [{ file, name, include }]
-    const _clientInstallParams = ref(null)
+    const clientInstallParams = ref(null)
     const installMode = ref('new')         // 'new' | 'existing'
     const installInstanceName = ref('')
     const installExistingInstance = ref('')
@@ -494,7 +494,7 @@ export default {
         name: m.file.replace(/\.jar$/i, ''),
         include: true,
       }))
-      _clientInstallParams.value = params
+      clientInstallParams.value = params
       showClientModModal.value = true
     }
 
@@ -509,32 +509,13 @@ export default {
     const confirmClientModInstall = async () => {
       showClientModModal.value = false
       const excluded = clientModList.value.filter(m => !m.include).map(m => m.file)
-      const params = { ..._clientInstallParams.value, excluded_mods: excluded }
-      installing.value = true
-      installSteps.value = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
-      installSummary.value = null
-      try {
-        await window.__apiReady
-        await window.pywebview.api.install_pack(params)
-      } catch(e) {
-        installSummary.value = { tone: 'error', text: String(e) }
-        installing.value = false
-      }
+      await doInstall({ ...clientInstallParams.value, excluded_mods: excluded })
     }
 
     const confirmConflictInstall = async () => {
       showConflictModal.value = false
       const skip = conflictGroups.value.flatMap(g => g.files.filter(f => f.keep).map(f => f.path))
-      installing.value = true
-      installSteps.value = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
-      installSummary.value = null
-      try {
-        await window.__apiReady
-        await window.pywebview.api.install_pack({ ...conflictInstallParams.value, skip_files: skip })
-      } catch(e) {
-        installSummary.value = { tone: 'error', text: String(e) }
-        installing.value = false
-      }
+      openClientModReview({ ...conflictInstallParams.value, skip_files: skip })
     }
 
     const modDiff = computed(() => {
