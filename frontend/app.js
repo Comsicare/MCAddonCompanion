@@ -210,8 +210,9 @@ const App = {
               <span v-html="icon('dots', 15)"></span>
             </button>
             <div v-if="showMenu" class="dropdown-panel">
-              <button class="dropdown-item" @click="page = 'instance_sync'; closeMenu()">
-                <span v-html="icon('settings', 14)"></span> Settings
+              <!-- TODO: replace with dedicated Settings page once built -->
+              <button class="dropdown-item" disabled style="opacity:.45;cursor:not-allowed" title="Coming soon">
+                <span v-html="icon('settings', 14)"></span> Settings <span class="fs-11 text-3" style="margin-left:auto">soon</span>
               </button>
               <div class="dropdown-sep"></div>
               <button class="dropdown-item" @click="openVersionModal">

@@ -292,26 +292,54 @@ export default {
           <template v-else-if="settingsModal.form">
             <div style="padding:20px 24px;display:flex;flex-direction:column;gap:0">
 
-              <template v-for="row in [
-                { key: 'schematic_sync', label: 'Schematic Sync', sub: 'Auto-sync schematics on instance exit' },
-                { key: 'hook_enabled',   label: 'Pre/Post Launch Hook', sub: 'Run sync commands before launch and after exit' },
-                { key: 'exit_sync',      label: 'Exit Sync', sub: 'Sync instance files when Prism closes' },
-                { key: 'startup_sync',   label: 'Startup Sync', sub: 'Restore instance files when Prism launches' },
-              ]" :key="row.key">
-                <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line)">
+              <!-- Schematic Sync -->
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line)">
+                <div>
+                  <div class="fs-13 fw-500 text-0">Schematic Sync</div>
+                  <div class="fs-12 text-3" style="margin-top:2px">Auto-sync schematics on instance exit</div>
+                </div>
+                <div class="toggle-track" :class="settingsModal.form.schematic_sync ? 'on' : 'off'"
+                  @click="settingsModal.form.schematic_sync = !settingsModal.form.schematic_sync" style="flex:none">
+                  <div class="toggle-thumb"></div>
+                </div>
+              </div>
+
+              <!-- Instance Sync + sub-toggles -->
+              <div style="padding:12px 0;border-bottom:1px solid var(--line)">
+                <div style="display:flex;align-items:center;justify-content:space-between">
                   <div>
-                    <div class="fs-13 fw-500 text-0">{{ row.label }}</div>
-                    <div class="fs-12 text-3" style="margin-top:2px">{{ row.sub }}</div>
+                    <div class="fs-13 fw-500 text-0">Instance Sync</div>
+                    <div class="fs-12 text-3" style="margin-top:2px">Enable pre/post-launch sync hook for this instance</div>
                   </div>
-                  <div
-                    class="toggle-track"
-                    :class="settingsModal.form[row.key] ? 'on' : 'off'"
-                    @click="settingsModal.form[row.key] = !settingsModal.form[row.key]"
-                    style="flex:none">
+                  <div class="toggle-track" :class="settingsModal.form.hook_enabled ? 'on' : 'off'"
+                    @click="settingsModal.form.hook_enabled = !settingsModal.form.hook_enabled" style="flex:none">
                     <div class="toggle-thumb"></div>
                   </div>
                 </div>
-              </template>
+                <!-- TODO: wire exit_sync and startup_sync logic when instance sync feature is reworked -->
+                <div style="margin-top:8px;padding-left:16px;display:flex;flex-direction:column;gap:6px;border-left:2px solid var(--line)">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+                    <div>
+                      <div class="fs-12 fw-500 text-1">Exit Sync</div>
+                      <div class="fs-11 text-3">Sync files when Prism closes</div>
+                    </div>
+                    <div class="toggle-track" :class="settingsModal.form.exit_sync ? 'on' : 'off'"
+                      @click="settingsModal.form.exit_sync = !settingsModal.form.exit_sync" style="flex:none;transform:scale(0.85);transform-origin:right center">
+                      <div class="toggle-thumb"></div>
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+                    <div>
+                      <div class="fs-12 fw-500 text-1">Startup Sync</div>
+                      <div class="fs-11 text-3">Restore files when Prism launches</div>
+                    </div>
+                    <div class="toggle-track" :class="settingsModal.form.startup_sync ? 'on' : 'off'"
+                      @click="settingsModal.form.startup_sync = !settingsModal.form.startup_sync" style="flex:none;transform:scale(0.85);transform-origin:right center">
+                      <div class="toggle-thumb"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
               <div v-if="settingsModal.form.installed"
                 style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line)">
