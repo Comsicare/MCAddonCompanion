@@ -812,6 +812,14 @@ class Api:
                     has_mc_prefix = any(m.startswith(".minecraft/") for m in members)
                     has_plain_prefix = any(m.startswith("minecraft/") for m in members)
                     prefix = ".minecraft/" if has_mc_prefix else ("minecraft/" if has_plain_prefix else "")
+                    eligible = [
+                        m for m in members
+                        if not m.endswith("/")
+                        and (m[len(prefix):] if prefix else m) not in skip_files
+                        and not (excluded_mods and (m[len(prefix):] if prefix else m).startswith("mods/")
+                                 and Path((m[len(prefix):] if prefix else m)).name in excluded_mods)
+                    ]
+                    total_files = len(eligible)
                     count = 0
                     for member in members:
                         if member.endswith("/"):
@@ -826,6 +834,9 @@ class Api:
                         with zf.open(member) as src, open(dest, "wb") as dst:
                             dst.write(src.read())
                         count += 1
+                        if total_files and (count % 10 == 0 or count == total_files):
+                            pct = min(int(count * 100 / total_files), 99)
+                            self._emit({"type": "progress", "flow": "install", "step": 1, "pct": pct})
                 self._emit({"type": "step", "flow": "install", "step": 1, "state": "ok", "detail": f"{count} files"})
 
                 # Step 2: Write Prism instance files (only for new instances)
