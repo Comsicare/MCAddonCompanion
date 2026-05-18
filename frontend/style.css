@@ -296,3 +296,20 @@ textarea.input { resize: vertical; min-height: 64px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.45 } }
 .spin { animation: spin 1.2s linear infinite; display: inline-flex; }
+
+/* action modal */
+.modal-fade {
+  transition: opacity .2s ease;
+}
+.log-panel {
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
