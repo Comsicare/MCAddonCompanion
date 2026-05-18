@@ -13,17 +13,6 @@ export default {
     // ── Instances tab ────────────────────────────────────────────────────────
     const installedInstances = ref([])
     const instancesLoading = ref(false)
-    // Per-instance progress: { [instance_name]: {steps, summary, active} }
-    const instanceProgress = ref({})
-
-    const _initInstProgress = (instName) => {
-      instanceProgress.value[instName] = {
-        steps: INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' })),
-        summary: null,
-        active: true,
-      }
-    }
-
     const loadInstalledInstances = async () => {
       instancesLoading.value = true
       try {
@@ -208,17 +197,6 @@ export default {
     })
     const modFiles = ref([])  // [{file: string, side: string}]
     const publishRemovedMods = ref([])  // mods that will be in removed_mods on publish
-    const publishSteps = computed(() => {
-      const p = props.progress || {}
-      return PUBLISH_STEPS.map((label, i) => {
-        if (p.step === i) return { label, state: p.state || 'run', detail: p.detail || '' }
-        if (typeof p.step === 'number' && i < p.step) return { label, state: 'ok', detail: '' }
-        return { label, state: 'idle', detail: '' }
-      })
-    })
-    const publishSummary = computed(() => props.progress?.text || '')
-    const publishTone = computed(() => props.progress?.tone || 'ok')
-    const publishing = ref(false)
     const existingPacks = ref([])
     const packNameIsNew = ref(false)
 
@@ -309,34 +287,6 @@ export default {
     watch(() => publishForm.value.categories.mods, () => loadModFiles())
     watch(() => publishForm.value.pack_name, () => { if (!packNameIsNew.value) loadModFiles() })
 
-    const publish = async () => {
-      if (publishing.value) return
-      publishing.value = true
-      try {
-        const mod_tags = {}
-        modFiles.value.forEach(m => { if (!m.excluded) mod_tags[m.file] = m.side })
-        await window.__apiReady
-        await window.pywebview.api.publish_pack({
-          repo_id: publishForm.value.repo_id,
-          instance_name: publishForm.value.instance_name,
-          pack_name: publishForm.value.pack_name,
-          version: publishForm.value.version,
-          description: publishForm.value.description,
-          changenotes: publishForm.value.changenotes,
-          mc_version: publishForm.value.mc_version,
-          loader: publishForm.value.loader,
-          loader_version: publishForm.value.loader_version,
-          categories: publishForm.value.categories,
-          mod_tags,
-        })
-      } catch(e) {}
-      publishing.value = false
-    }
-
-    const clearPublish = () => {
-      // reset progress by emitting reset — can only suggest user refresh
-    }
-
     // ── Browse tab ───────────────────────────────────────────────────────────
     const browseRepoId = ref('')
     const packs = ref([])
@@ -356,7 +306,6 @@ export default {
     const installMode = ref('new')         // 'new' | 'existing'
     const installInstanceName = ref('')
     const installExistingInstance = ref('')
-    const installing = ref(false)
     const INSTALL_STEPS = ['Download zip', 'Extract files', 'Create instance']
     const _makeModal = () => ({
       show: false, phase: 'summary', done: false, error: false,
@@ -388,9 +337,6 @@ export default {
         modal.value.logs.push(event.text)
       }
     }
-    const installSteps = ref(INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' })))
-    const installSummary = ref(null)
-
     const SERVER_PACK_STEPS = ['Download pack', 'Build server pack', 'Save to folder']
     const showServerModal = ref(false)
     const serverModalStep = ref(1)
@@ -449,35 +395,6 @@ export default {
         get allKeep() { return files.every(f => f.keep) },
         toggleAll(v) { files.forEach(f => f.keep = v) },
       }))
-    }
-
-    const doInstall = async (params, skipFiles = []) => {
-      installing.value = true
-      installSteps.value = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
-      installSummary.value = null
-      try {
-        await window.__apiReady
-        await window.pywebview.api.install_pack({ ...params, skip_files: skipFiles })
-      } catch(e) {
-        installSummary.value = { tone: 'error', text: String(e) }
-        installing.value = false
-      }
-    }
-
-    const installPack = async (extraSkipFiles = []) => {
-      if (installing.value) return
-      const instName = installMode.value === 'new'
-        ? installInstanceName.value
-        : installExistingInstance.value
-      if (!instName || !selectedPack.value || !selectedVersionObj.value) return
-      await doInstall({
-        repo_id: browseRepoId.value,
-        pack_name: selectedPack.value,
-        version: selectedVersionObj.value.version,
-        instance_name: instName,
-        mode: installMode.value,
-        track: trackOnInstall.value,
-      }, extraSkipFiles)
     }
 
     const checkAndInstall = async () => {
@@ -758,13 +675,6 @@ export default {
 
     watch(browseRepoId, loadPacks)
 
-    const stepIconState = (state) => {
-      if (state === 'ok') return 'done'
-      if (state === 'running') return 'run'
-      if (state === 'error') return 'err'
-      return 'idle'
-    }
-
     const packAbbr = name => name.slice(0, 2).toUpperCase()
     const PACK_COLORS = ['#8a5cf6','#6fae8a','#c9a25b','#5b8ec9','#c97070','#8a7fc9']
     const packColor = (name) => PACK_COLORS[name.charCodeAt(0) % PACK_COLORS.length]
@@ -820,9 +730,8 @@ export default {
       testResult, testLoading,
       loadRepos, selectRepo, newRepo, saveRepo, deleteRepo, testConnection,
       // publish
-      allInstances, publishForm, modFiles, loadModFiles, publishSteps, publishSummary, publishTone, publishing,
+      allInstances, publishForm, modFiles, loadModFiles,
       existingPacks, packNameIsNew,
-      publish, clearPublish,
       // browse
       browseRepoId, packs, packsLoading, selectedPack,
       packVersions, versionsLoading, selectedVersionObj,
@@ -833,11 +742,11 @@ export default {
       serverProgress, serverSummary, SERVER_PACK_STEPS,
       openServerModal, pickServerFolder, startServerDownload,
       installMode, installInstanceName, installExistingInstance,
-      installSteps, installSummary, INSTALL_STEPS,
-      installing, installPack, selectPack, selectVersion, checkAndInstall, modDiff,
-      stepIconState, packAbbr, packColor, PUBLISH_STEPS,
+      INSTALL_STEPS,
+      selectPack, selectVersion, checkAndInstall, modDiff,
+      packAbbr, packColor, PUBLISH_STEPS,
       // instances tab
-      installedInstances, instancesLoading, instanceProgress, loadInstalledInstances,
+      installedInstances, instancesLoading, loadInstalledInstances,
       untrackInstance, installUpdate, removeInstalledRecord, reinstallInstance, toggleHook,
     }
   },
@@ -1204,9 +1113,9 @@ export default {
                     Track for updates (auto-update prompt on game launch)
                   </label>
 
-                  <button class="btn btn-primary btn-sm flex items-center gap-8" :disabled="installing" @click="checkAndInstall">
-                    <span :class="installing ? 'spin' : ''" v-html="icon('download', 13)"></span>
-                    {{ installing ? 'Installing…' : 'Install' }}
+                  <button class="btn btn-primary btn-sm flex items-center gap-8" @click="checkAndInstall">
+                    <span v-html="icon('download', 13)"></span>
+                    Install
                   </button>
                 </div>
               </div>
