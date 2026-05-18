@@ -44,7 +44,52 @@ export default {
       } catch(e) {}
     }
 
-    return { data, loading, error, query, filtered, syncedCount, load, icon, abbr, openInstancesFolder }
+    const settingsModal = ref({ show: false, loading: false, saving: false, instance: null, form: null })
+
+    const openSettings = async (instName) => {
+      settingsModal.value = { show: true, loading: true, saving: false, instance: instName, form: null }
+      try {
+        await window.__apiReady
+        const s = await window.pywebview.api.get_instance_settings(instName)
+        settingsModal.value.form = {
+          schematic_sync: s.schematic_sync,
+          exit_sync: s.exit_sync,
+          startup_sync: s.startup_sync,
+          hook_enabled: s.hook_enabled,
+          tracked: s.tracked,
+          installed: s.installed,
+          pack_name: s.pack_name,
+        }
+      } catch(e) {}
+      settingsModal.value.loading = false
+    }
+
+    const closeSettings = () => {
+      settingsModal.value = { show: false, loading: false, saving: false, instance: null, form: null }
+    }
+
+    const saveSettings = async () => {
+      if (!settingsModal.value.form) return
+      settingsModal.value.saving = true
+      try {
+        await window.__apiReady
+        await window.pywebview.api.save_instance_settings(
+          settingsModal.value.instance,
+          settingsModal.value.form
+        )
+        closeSettings()
+        await load()
+      } catch(e) {
+      } finally {
+        settingsModal.value.saving = false
+      }
+    }
+
+    return {
+      data, loading, error, query, filtered, syncedCount, load, icon, abbr,
+      openInstancesFolder,
+      settingsModal, openSettings, closeSettings, saveSettings,
+    }
   },
   template: `
     <main class="page-wrap">
@@ -214,7 +259,7 @@ export default {
                   <td><span class="mono fs-12 text-2">—</span></td>
                   <td style="text-align:right">
                     <div class="flex items-center gap-4" style="justify-content:flex-end">
-                      <button class="icon-btn" title="Settings"><span v-html="icon('settings',14)"></span></button>
+                      <button class="icon-btn" title="Settings" @click="openSettings(inst.name)"><span v-html="icon('settings',14)"></span></button>
                     </div>
                   </td>
                 </tr>
@@ -226,6 +271,76 @@ export default {
           </div>
         </div>
       </template>
+
+    <!-- Per-instance settings modal -->
+    <teleport to="body">
+      <div v-if="settingsModal.show"
+        style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px"
+        @mousedown.self="closeSettings">
+        <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:440px;overflow:hidden">
+
+          <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div class="kicker">Instance</div>
+              <div class="fw-600 text-0" style="font-size:15px">{{ settingsModal.instance }}</div>
+            </div>
+            <button class="icon-btn" @click="closeSettings"><span v-html="icon('x',13)"></span></button>
+          </div>
+
+          <div v-if="settingsModal.loading" style="padding:32px;text-align:center" class="text-3 fs-13">Loading…</div>
+
+          <template v-else-if="settingsModal.form">
+            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:0">
+
+              <template v-for="row in [
+                { key: 'schematic_sync', label: 'Schematic Sync', sub: 'Auto-sync schematics on instance exit' },
+                { key: 'hook_enabled',   label: 'Pre/Post Launch Hook', sub: 'Run sync commands before launch and after exit' },
+                { key: 'exit_sync',      label: 'Exit Sync', sub: 'Sync instance files when Prism closes' },
+                { key: 'startup_sync',   label: 'Startup Sync', sub: 'Restore instance files when Prism launches' },
+              ]" :key="row.key">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line)">
+                  <div>
+                    <div class="fs-13 fw-500 text-0">{{ row.label }}</div>
+                    <div class="fs-12 text-3" style="margin-top:2px">{{ row.sub }}</div>
+                  </div>
+                  <div
+                    class="toggle-track"
+                    :class="settingsModal.form[row.key] ? 'on' : 'off'"
+                    @click="settingsModal.form[row.key] = !settingsModal.form[row.key]"
+                    style="flex:none">
+                    <div class="toggle-thumb" :style="settingsModal.form[row.key] ? 'left:14px' : 'left:1px'"></div>
+                  </div>
+                </div>
+              </template>
+
+              <div v-if="settingsModal.form.installed"
+                style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line)">
+                <div>
+                  <div class="fs-13 fw-500 text-0">Track for Updates</div>
+                  <div class="fs-12 text-3" style="margin-top:2px">{{ settingsModal.form.pack_name || 'Pack' }} — auto-check for new versions</div>
+                </div>
+                <div
+                  class="toggle-track"
+                  :class="settingsModal.form.tracked ? 'on' : 'off'"
+                  @click="settingsModal.form.tracked = !settingsModal.form.tracked"
+                  style="flex:none">
+                  <div class="toggle-thumb" :style="settingsModal.form.tracked ? 'left:14px' : 'left:1px'"></div>
+                </div>
+              </div>
+
+            </div>
+
+            <div style="padding:16px 24px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px">
+              <button class="btn btn-ghost btn-sm" @click="closeSettings">Cancel</button>
+              <button class="btn btn-primary btn-sm" :disabled="settingsModal.saving" @click="saveSettings">
+                {{ settingsModal.saving ? 'Saving…' : 'Save' }}
+              </button>
+            </div>
+          </template>
+
+        </div>
+      </div>
+    </teleport>
     </main>
   `
 }
