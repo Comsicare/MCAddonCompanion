@@ -526,8 +526,7 @@ export default {
       const mods = selectedVersionObj.value?.metadata?.mods || []
       const clientMods = mods.filter(m => m.side === 'client')
       if (!clientMods.length) {
-        // No client mods — proceed directly
-        doInstall(params)
+        openInstallModal(params, params.skip_files || [], [])
         return
       }
       clientModList.value = clientMods.map(m => ({
@@ -550,7 +549,48 @@ export default {
     const confirmClientModInstall = async () => {
       showClientModModal.value = false
       const excluded = clientModList.value.filter(m => !m.include).map(m => m.file)
-      await doInstall({ ...clientInstallParams.value, excluded_mods: excluded })
+      const params = { ...clientInstallParams.value, excluded_mods: excluded }
+      openInstallModal(params, clientInstallParams.value.skip_files || [], excluded)
+    }
+
+    const openInstallModal = (params, skipFiles, excludedMods) => {
+      const mode = params.mode === 'new' ? 'new instance' : 'existing instance'
+      installModal.value = {
+        show: true, phase: 'summary', done: false, error: false,
+        title: 'Install Pack',
+        summary: `${params.pack_name} v${params.version} → ${params.instance_name} (${mode})`,
+        deletions: [...(skipFiles || []), ...(excludedMods || [])],
+        steps: INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' })),
+        logs: [],
+        _params: params,
+      }
+    }
+
+    const confirmInstall = async () => {
+      const params = installModal.value._params
+      installModal.value.phase = 'progress'
+      try {
+        await window.__apiReady
+        await window.pywebview.api.install_pack(params)
+      } catch(e) {
+        installModal.value.done = true
+        installModal.value.error = true
+        installModal.value.logs.push(`Error: ${e}`)
+      }
+    }
+
+    const retryInstall = async () => {
+      installModal.value.steps = INSTALL_STEPS.map(l => ({ label: l, state: 'idle', detail: '' }))
+      installModal.value.logs = []
+      installModal.value.done = false
+      installModal.value.error = false
+      await confirmInstall()
+    }
+
+    const closeInstallModal = () => {
+      const wasOk = installModal.value.done && !installModal.value.error
+      installModal.value = _makeModal()
+      if (wasOk) loadInstalledInstances()
     }
 
     const openServerModal = async () => {
@@ -679,6 +719,7 @@ export default {
     return {
       tab, icon,
       installModal, publishModal, updateModal, routeToModal, ActionModal,
+      openInstallModal, confirmInstall, retryInstall, closeInstallModal,
       // repos
       repos, reposLoading, selectedRepo, repoForm, repoSaving, repoError, repoSuccess,
       testResult, testLoading,
@@ -1115,26 +1156,6 @@ export default {
                 </div>
               </div>
 
-              <!-- Progress panel -->
-              <div v-if="installing || installSummary" class="card">
-                <div class="card-body" style="padding:10px 8px">
-                  <div class="kicker" style="padding:0 8px 6px">Progress</div>
-                  <div v-for="(s, i) in installSteps" :key="i" class="progress-step">
-                    <span class="progress-step-icon" :class="s.state">
-                      <span v-if="s.state==='done'" v-html="icon('check',11)"></span>
-                      <span v-else-if="s.state==='run'" class="spin" v-html="icon('spin',11)"></span>
-                      <span v-else-if="s.state==='err'" v-html="icon('x',11)"></span>
-                    </span>
-                    <span class="fill fs-12 text-0">{{ s.label }}</span>
-                    <span class="mono fs-11 text-3">{{ s.detail }}</span>
-                  </div>
-                  <div v-if="installSummary" style="border-top:1px solid var(--line);margin:6px 8px 0;padding-top:8px;font-size:12px"
-                    :style="installSummary.tone==='ok' ? 'color:var(--ok)' : 'color:var(--err)'">
-                    {{ installSummary.text }}
-                  </div>
-                </div>
-              </div>
-
               <!-- Mod list -->
               <div v-if="selectedVersionObj?.metadata?.mods?.length" class="card">
                 <div class="card-header"><div class="kicker">Mods</div></div>
@@ -1272,6 +1293,22 @@ export default {
           </div>
         </div>
       </template>
+
+      <!-- ─── INSTALL ACTION MODAL ──────────────────────────────────────────────── -->
+      <action-modal
+        :show="installModal.show"
+        :title="installModal.title"
+        :summary="installModal.summary"
+        :deletions="installModal.deletions"
+        :steps="installModal.steps"
+        :logs="installModal.logs"
+        :phase="installModal.phase"
+        :done="installModal.done"
+        :error="installModal.error"
+        @confirm="confirmInstall"
+        @cancel="closeInstallModal"
+        @retry="retryInstall"
+      />
 
       <!-- ─── CONFLICT MODAL ───────────────────────────────────────────────────── -->
       <teleport to="body">
