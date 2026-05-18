@@ -311,12 +311,14 @@ export default {
       show: false, phase: 'summary', done: false, error: false,
       title: '', summary: '', deletions: [],
       steps: [], logs: [],
+      _params: null, _cancelled: false,
     })
     const installModal = ref(_makeModal())
     const publishModal = ref(_makeModal())
     const updateModal  = ref(_makeModal())
 
     const routeToModal = (modal, event) => {
+      if (modal.value._cancelled) return
       if (event.type === 'reset') {
         modal.value.steps = modal.value.steps.map(s => ({ ...s, state: 'idle', detail: '' }))
         modal.value.logs = []
@@ -482,6 +484,7 @@ export default {
 
     const confirmInstall = async () => {
       const params = installModal.value._params
+      if (!params) return
       installModal.value.phase = 'progress'
       try {
         await window.__apiReady
@@ -503,6 +506,7 @@ export default {
 
     const closeInstallModal = () => {
       const wasOk = installModal.value.done && !installModal.value.error
+      installModal.value._cancelled = true
       installModal.value = _makeModal()
       if (wasOk) loadInstalledInstances()
     }
@@ -578,6 +582,7 @@ export default {
 
     const confirmUpdate = async () => {
       const params = updateModal.value._params
+      if (!params) return
       updateModal.value.phase = 'progress'
       try {
         await window.__apiReady
@@ -599,6 +604,7 @@ export default {
 
     const closeUpdateModal = () => {
       const wasOk = updateModal.value.done && !updateModal.value.error
+      updateModal.value._cancelled = true
       updateModal.value = _makeModal()
       if (wasOk) loadInstalledInstances()
     }
