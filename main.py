@@ -1082,7 +1082,6 @@ class Api:
         return None
 
     def get_downloads_folder(self) -> str:
-        from pathlib import Path
         return str(Path.home() / "Downloads")
 
     def download_server_pack(self, params: dict) -> None:
@@ -1106,8 +1105,10 @@ class Api:
         slug = _slugify(pack_name)
 
         def _run():
+            _step = [0]
             try:
                 # Step 0: Download zip
+                _step[0] = 0
                 self._emit({"type": "server_pack", "step": 0, "state": "running", "detail": ""})
                 client = GitLabClient(repo["base_url"], repo["project_id"],
                                       repo.get("upload_token"), repo.get("read_token"))
@@ -1123,6 +1124,7 @@ class Api:
                 self._emit({"type": "server_pack", "step": 0, "state": "ok", "detail": f"{size_mb:.1f} MB"})
 
                 # Step 1: Filter content
+                _step[0] = 1
                 self._emit({"type": "server_pack", "step": 1, "state": "running", "detail": ""})
                 meta = client.get_metadata(slug, version)
                 server_mods: set[str] = set()
@@ -1154,10 +1156,14 @@ class Api:
                                 continue
                         filtered.append((bare, zf.read(member)))
 
+                if not filtered:
+                    raise ValueError("No files passed the server filter — check metadata mods list.")
+
                 self._emit({"type": "server_pack", "step": 1, "state": "ok",
                             "detail": f"{len(filtered)} files"})
 
                 # Step 2: Write to destination
+                _step[0] = 2
                 self._emit({"type": "server_pack", "step": 2, "state": "running", "detail": ""})
                 dest_folder.mkdir(parents=True, exist_ok=True)
                 output_name = f"{slug}-{version}-server"
@@ -1181,6 +1187,7 @@ class Api:
                 self._emit({"type": "server_pack_summary", "text": result_path, "tone": "ok"})
 
             except Exception as e:
+                self._emit({"type": "server_pack", "step": _step[0], "state": "error", "detail": str(e)})
                 self._emit({"type": "server_pack_summary", "text": f"Error: {e}", "tone": "error"})
 
         threading.Thread(target=_run, daemon=True).start()
