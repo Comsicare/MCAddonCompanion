@@ -37,7 +37,135 @@ export default {
     const icon = (name, size = 16) => window.__icon(name, size)
     const abbr = name => name.slice(0, 2).toUpperCase()
 
-    return { data, loading, error, query, filtered, syncedCount, load, icon, abbr }
+    const openInstancesFolder = async () => {
+      try {
+        await window.__apiReady
+        await window.pywebview.api.open_instances_folder()
+      } catch(e) {}
+    }
+
+    // Expandable row detail
+    const expandedRow = ref(null)
+    const rowDetail = ref({})
+
+    const toggleRow = (instName) => {
+      if (expandedRow.value === instName) {
+        expandedRow.value = null
+        return
+      }
+      expandedRow.value = instName
+      if (rowDetail.value[instName]) return
+      rowDetail.value = { ...rowDetail.value, [instName]: { loading: true, data: null } }
+      window.__apiReady.then(() =>
+        window.pywebview.api.get_instance_detail(instName)
+          .then(d => { rowDetail.value = { ...rowDetail.value, [instName]: { loading: false, data: d } } })
+          .catch(() => { rowDetail.value = { ...rowDetail.value, [instName]: { loading: false, data: null } } })
+      )
+    }
+
+    const refreshRowDetail = (instName) => {
+      rowDetail.value = { ...rowDetail.value, [instName]: { loading: true, data: null } }
+      window.__apiReady.then(() =>
+        window.pywebview.api.get_instance_detail(instName)
+          .then(d => { rowDetail.value = { ...rowDetail.value, [instName]: { loading: false, data: d } } })
+          .catch(() => { rowDetail.value = { ...rowDetail.value, [instName]: { loading: false, data: null } } })
+      )
+    }
+
+    const fmtDate = (iso) => {
+      if (!iso) return '—'
+      const d = new Date(iso)
+      const diff = Date.now() - d.getTime()
+      const mins = Math.floor(diff / 60000)
+      if (mins < 1) return 'just now'
+      if (mins < 60) return `${mins}m ago`
+      const hrs = Math.floor(mins / 60)
+      if (hrs < 24) return `${hrs}h ago`
+      return `${Math.floor(hrs / 24)}d ago`
+    }
+
+    // Archive state
+    const archiveConfirm = ref(null)
+    const archiving = ref(false)
+    const archiveError = ref(null)
+
+    const doArchive = async (instName, moveOnly) => {
+      archiving.value = true
+      archiveError.value = null
+      try {
+        await window.__apiReady
+        const method = moveOnly ? 'archive_instance_move_only' : 'archive_instance'
+        const r = await window.pywebview.api[method](instName)
+        if (r.ok) {
+          closeSettings()
+          await load()
+        } else {
+          archiveError.value = r.error || 'Archive failed'
+        }
+      } catch(e) {
+        archiveError.value = String(e)
+      } finally {
+        archiving.value = false
+        archiveConfirm.value = null
+      }
+    }
+
+    // Per-instance settings modal
+    const settingsModal = ref({ show: false, loading: false, saving: false, instance: null, form: null })
+
+    const openSettings = async (instName) => {
+      settingsModal.value = { show: true, loading: true, saving: false, instance: instName, form: null }
+      archiveConfirm.value = null
+      archiveError.value = null
+      try {
+        await window.__apiReady
+        const s = await window.pywebview.api.get_instance_settings(instName)
+        settingsModal.value.form = {
+          schematic_sync: s.schematic_sync,
+          exit_sync: s.exit_sync,
+          startup_sync: s.startup_sync,
+          hook_enabled: s.hook_enabled,
+          tracked: s.tracked,
+          installed: s.installed,
+          pack_name: s.pack_name,
+        }
+      } catch(e) {
+        closeSettings()
+        return
+      }
+      settingsModal.value.loading = false
+    }
+
+    const closeSettings = () => {
+      settingsModal.value = { show: false, loading: false, saving: false, instance: null, form: null }
+      archiveConfirm.value = null
+      archiveError.value = null
+    }
+
+    const saveSettings = async () => {
+      if (!settingsModal.value.form) return
+      settingsModal.value.saving = true
+      try {
+        await window.__apiReady
+        await window.pywebview.api.save_instance_settings(
+          settingsModal.value.instance,
+          settingsModal.value.form
+        )
+        settingsModal.value.saving = false
+        closeSettings()
+        await load()
+      } catch(e) {
+        settingsModal.value.saving = false
+      }
+    }
+
+    return {
+      data, loading, error, query, filtered, syncedCount, load, icon, abbr,
+      openInstancesFolder,
+      expandedRow, rowDetail, toggleRow, refreshRowDetail, fmtDate,
+      archiveConfirm, archiving, archiveError, doArchive,
+      settingsModal, openSettings, closeSettings, saveSettings,
+    }
   },
   template: `
     <main class="page-wrap">
@@ -90,7 +218,7 @@ export default {
               </div>
               <div class="flex items-center justify-between mt-14" style="padding-top:12px; border-top:1px solid var(--line)">
                 <span class="mono fs-12 text-3">PrismLauncher/instances</span>
-                <button class="ghost-link fs-12">Open <span v-html="icon('external',11)"></span></button>
+                <button class="ghost-link fs-12" @click="openInstancesFolder">Open <span v-html="icon('external',11)"></span></button>
               </div>
             </div>
           </div>
@@ -149,7 +277,7 @@ export default {
                 <span class="fs-12 text-3">{{ r.package_name }}</span>
               </div>
               <div style="padding:4px 10px 0; display:flex; justify-content:space-between; align-items:center">
-                <button class="ghost-link"><span v-html="icon('plus',11)"></span> Add repo</button>
+                <button class="ghost-link" @click="$emit('navigate','pack_registry')"><span v-html="icon('plus',11)"></span> Add repo</button>
               </div>
             </div>
           </div>
@@ -182,7 +310,7 @@ export default {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="inst in filtered" :key="inst.name">
+                <tr v-for="inst in filtered" :key="inst.name" @click="toggleRow(inst.name)" style="cursor:pointer">
                   <td>
                     <div class="flex items-center gap-10">
                       <div class="inst-avatar">{{ abbr(inst.name) }}</div>
@@ -205,9 +333,71 @@ export default {
                     <span v-else style="display:inline-flex;width:8px;height:8px;border-radius:8px;border:1.5px solid var(--text-3);opacity:.7"></span>
                   </td>
                   <td><span class="mono fs-12 text-2">—</span></td>
-                  <td style="text-align:right">
+                  <td style="text-align:right" @click.stop>
                     <div class="flex items-center gap-4" style="justify-content:flex-end">
-                      <button class="icon-btn" title="Settings"><span v-html="icon('settings',14)"></span></button>
+                      <button class="icon-btn" title="Settings" @click="openSettings(inst.name)"><span v-html="icon('settings',14)"></span></button>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="expandedRow === inst.name" :key="inst.name + '-detail'">
+                  <td colspan="6" style="padding:0;border-top:none">
+                    <div class="row-detail">
+                      <template v-if="rowDetail[inst.name]?.loading">
+                        <div class="row-detail-field" style="grid-column:1/-1">
+                          <span class="fs-13 text-3">Loading…</span>
+                        </div>
+                      </template>
+                      <template v-else-if="rowDetail[inst.name]?.data">
+                        <div class="row-detail-field">
+                          <span class="row-detail-label">Last Exit Sync</span>
+                          <span class="row-detail-value mono fs-12" :title="rowDetail[inst.name].data.last_exit_sync || ''">{{ fmtDate(rowDetail[inst.name].data.last_exit_sync) }}</span>
+                        </div>
+                        <div class="row-detail-field">
+                          <span class="row-detail-label">Last Startup Sync</span>
+                          <span class="row-detail-value mono fs-12" :title="rowDetail[inst.name].data.last_startup_sync || ''">{{ fmtDate(rowDetail[inst.name].data.last_startup_sync) }}</span>
+                        </div>
+                        <div class="row-detail-field">
+                          <span class="row-detail-label">Synced</span>
+                          <span class="row-detail-value fs-12">{{ rowDetail[inst.name].data.synced_file_count }} files · {{ rowDetail[inst.name].data.synced_size_mb }} MB</span>
+                        </div>
+                        <div class="row-detail-field">
+                          <span class="row-detail-label">Instance Size</span>
+                          <span class="row-detail-value fs-12">{{ rowDetail[inst.name].data.instance_folder_size_mb != null ? rowDetail[inst.name].data.instance_folder_size_mb + ' MB' : '—' }}</span>
+                        </div>
+                        <template v-if="rowDetail[inst.name].data.pack">
+                          <div class="row-detail-field">
+                            <span class="row-detail-label">Installed Pack</span>
+                            <span class="row-detail-value fs-12">{{ rowDetail[inst.name].data.pack.name }} v{{ rowDetail[inst.name].data.pack.installed_version }}</span>
+                          </div>
+                          <div class="row-detail-field">
+                            <span class="row-detail-label">Tracking</span>
+                            <span class="row-detail-value fs-12">{{ rowDetail[inst.name].data.pack.tracked ? 'Tracked' : 'Not tracked' }}</span>
+                          </div>
+                          <div v-if="rowDetail[inst.name].data.pack.has_update" class="row-detail-field">
+                            <span class="row-detail-label">Update</span>
+                            <span class="row-detail-value fs-12">
+                              v{{ rowDetail[inst.name].data.pack.latest_version }} available —
+                              <a class="ghost-link" style="font-size:12px" @click.stop="$emit('navigate','pack_registry')">Go to Registry</a>
+                            </span>
+                          </div>
+                        </template>
+                        <div v-if="(rowDetail[inst.name].data.last_exit_errors||[]).length || (rowDetail[inst.name].data.last_startup_errors||[]).length"
+                          class="row-detail-field" style="grid-column:1/-1">
+                          <span class="row-detail-label">Last Errors</span>
+                          <div v-for="e in [...(rowDetail[inst.name].data.last_exit_errors||[]), ...(rowDetail[inst.name].data.last_startup_errors||[])]"
+                            :key="e" class="row-detail-error">{{ e }}</div>
+                        </div>
+                        <div class="row-detail-field" style="grid-column:1/-1;display:flex;justify-content:flex-end">
+                          <button class="btn btn-ghost btn-sm" style="font-size:11px" @click.stop="refreshRowDetail(inst.name)">
+                            <span v-html="icon('refresh',11)"></span> Refresh
+                          </button>
+                        </div>
+                      </template>
+                      <template v-else>
+                        <div class="row-detail-field" style="grid-column:1/-1">
+                          <span class="fs-13 text-3">No sync data available.</span>
+                        </div>
+                      </template>
                     </div>
                   </td>
                 </tr>
@@ -219,6 +409,177 @@ export default {
           </div>
         </div>
       </template>
+
+    <!-- Per-instance settings modal -->
+    <teleport to="body">
+      <div v-if="settingsModal.show"
+        style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px"
+        @mousedown.self="closeSettings">
+        <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:440px;overflow:hidden">
+
+          <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div class="kicker">Instance</div>
+              <div class="fw-600 text-0" style="font-size:15px">{{ settingsModal.instance }}</div>
+            </div>
+            <button class="icon-btn" @click="closeSettings"><span v-html="icon('x',13)"></span></button>
+          </div>
+
+          <div v-if="settingsModal.loading" style="padding:32px;text-align:center" class="text-3 fs-13">Loading…</div>
+
+          <template v-else-if="settingsModal.form">
+            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:0;overflow-y:auto;max-height:60vh">
+
+              <!-- Schematic Sync -->
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line)">
+                <div>
+                  <div class="fs-13 fw-500 text-0">Schematic Sync</div>
+                  <div class="fs-12 text-3" style="margin-top:2px">Auto-sync schematics on instance exit</div>
+                </div>
+                <div class="toggle-track" :class="settingsModal.form.schematic_sync ? 'on' : 'off'"
+                  @click="settingsModal.form.schematic_sync = !settingsModal.form.schematic_sync" style="flex:none">
+                  <div class="toggle-thumb"></div>
+                </div>
+              </div>
+
+              <!-- Pre/Post Launch Hook -->
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line)">
+                <div>
+                  <div class="fs-13 fw-500 text-0">Pre/Post Launch Hook</div>
+                  <div class="fs-12 text-3" style="margin-top:2px">Run sync commands before launch and after exit</div>
+                  <div v-if="!data.instance_sync_configured" class="toggle-hint">
+                    Instance Sync not set up — <a @click="closeSettings(); $emit('navigate','instance_sync')">Configure →</a>
+                  </div>
+                </div>
+                <div class="toggle-track"
+                  :class="[settingsModal.form.hook_enabled ? 'on' : 'off', !data.instance_sync_configured ? 'disabled-hint' : '']"
+                  @click="if(data.instance_sync_configured) settingsModal.form.hook_enabled = !settingsModal.form.hook_enabled"
+                  style="flex:none">
+                  <div class="toggle-thumb"></div>
+                </div>
+              </div>
+
+              <!-- Instance Sync group -->
+              <div style="padding:12px 0;border-bottom:1px solid var(--line)">
+                <div style="display:flex;align-items:center;justify-content:space-between">
+                  <div>
+                    <div class="fs-13 fw-500 text-0">Instance Sync</div>
+                    <div class="fs-12 text-3" style="margin-top:2px">Sync instance files on launch and exit</div>
+                    <div v-if="!data.instance_sync_configured" class="toggle-hint">
+                      Instance Sync not set up — <a @click="closeSettings(); $emit('navigate','instance_sync')">Configure →</a>
+                    </div>
+                  </div>
+                  <div class="toggle-track"
+                    :class="[(settingsModal.form.exit_sync || settingsModal.form.startup_sync) ? 'on' : 'off', !data.instance_sync_configured ? 'disabled-hint' : '']"
+                    style="flex:none;opacity:.5;cursor:not-allowed">
+                    <div class="toggle-thumb"></div>
+                  </div>
+                </div>
+                <!-- TODO: wire exit_sync and startup_sync save logic when instance sync feature is reworked -->
+                <div style="margin-top:8px;padding-left:16px;display:flex;flex-direction:column;gap:6px;border-left:2px solid var(--line)">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+                    <div>
+                      <div class="fs-12 fw-500 text-1">Exit Sync</div>
+                      <div class="fs-11 text-3">Sync files when Prism closes</div>
+                    </div>
+                    <div class="toggle-track"
+                      :class="[settingsModal.form.exit_sync ? 'on' : 'off', !data.instance_sync_configured ? 'disabled-hint' : '']"
+                      @click="if(data.instance_sync_configured) settingsModal.form.exit_sync = !settingsModal.form.exit_sync"
+                      style="flex:none;transform:scale(0.85);transform-origin:right center">
+                      <div class="toggle-thumb"></div>
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+                    <div>
+                      <div class="fs-12 fw-500 text-1">Startup Sync</div>
+                      <div class="fs-11 text-3">Restore files when Prism launches</div>
+                    </div>
+                    <div class="toggle-track"
+                      :class="[settingsModal.form.startup_sync ? 'on' : 'off', !data.instance_sync_configured ? 'disabled-hint' : '']"
+                      @click="if(data.instance_sync_configured) settingsModal.form.startup_sync = !settingsModal.form.startup_sync"
+                      style="flex:none;transform:scale(0.85);transform-origin:right center">
+                      <div class="toggle-thumb"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Track for Updates (only if pack installed) -->
+              <div v-if="settingsModal.form.installed"
+                style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line)">
+                <div>
+                  <div class="fs-13 fw-500 text-0">Track for Updates</div>
+                  <div class="fs-12 text-3" style="margin-top:2px">{{ settingsModal.form.pack_name || 'Pack' }} — auto-check for new versions</div>
+                </div>
+                <div class="toggle-track" :class="settingsModal.form.tracked ? 'on' : 'off'"
+                  @click="settingsModal.form.tracked = !settingsModal.form.tracked" style="flex:none">
+                  <div class="toggle-thumb"></div>
+                </div>
+              </div>
+
+              <!-- Pack update shortcut -->
+              <div v-if="settingsModal.form.installed && rowDetail[settingsModal.instance]?.data?.pack?.has_update"
+                style="padding:10px 0;border-bottom:1px solid var(--line)">
+                <div class="fs-12 text-2">Update available — v{{ rowDetail[settingsModal.instance].data.pack.latest_version }}</div>
+                <button class="ghost-link" style="margin-top:4px" @click="closeSettings(); $emit('navigate','pack_registry')">
+                  <span v-html="icon('download',11)"></span> Go to Pack Registry to update
+                </button>
+              </div>
+
+              <!-- Danger Zone -->
+              <div class="danger-zone">
+                <div class="danger-zone-label">Danger Zone</div>
+                <div v-if="archiveError" class="fs-12" style="color:var(--err);margin-bottom:8px">{{ archiveError }}</div>
+
+                <!-- Archive (with zip) -->
+                <div style="margin-bottom:8px">
+                  <template v-if="archiveConfirm === 'archive'">
+                    <div class="fs-12 text-1" style="margin-bottom:6px">This will sync, zip, and remove the instance from Prism. Continue?</div>
+                    <div class="flex items-center gap-6">
+                      <button class="btn-danger" :disabled="archiving" @click="doArchive(settingsModal.instance, false)">{{ archiving ? 'Archiving…' : 'Confirm Archive' }}</button>
+                      <button class="btn btn-ghost btn-sm" @click="archiveConfirm = null">Cancel</button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <button class="btn-danger" @click="archiveConfirm = 'archive'; archiveError = null">
+                      <span v-html="icon('archive',12)"></span> Archive
+                    </button>
+                    <div class="fs-11 text-3" style="margin-top:4px">Sync + create zip backup + remove from Prism</div>
+                  </template>
+                </div>
+
+                <!-- Archive Move Only -->
+                <div>
+                  <template v-if="archiveConfirm === 'move_only'">
+                    <div class="fs-12" style="color:var(--err);margin-bottom:6px">⚠ Warning: Without a zip backup, this instance cannot be recovered if the sync folder is lost or corrupted.</div>
+                    <div class="flex items-center gap-6">
+                      <button class="btn-danger" :disabled="archiving" @click="doArchive(settingsModal.instance, true)">{{ archiving ? 'Moving…' : 'Yes, move only' }}</button>
+                      <button class="btn btn-ghost btn-sm" @click="archiveConfirm = null">Cancel</button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <button class="btn-danger" @click="archiveConfirm = 'move_only'; archiveError = null">
+                      <span v-html="icon('archive',12)"></span> Archive (Move only)
+                    </button>
+                    <div class="fs-11 text-3" style="margin-top:4px">Sync + remove from Prism — no zip backup created</div>
+                  </template>
+                </div>
+
+              </div>
+
+            </div>
+
+            <div style="padding:16px 24px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px">
+              <button class="btn btn-ghost btn-sm" @click="closeSettings">Cancel</button>
+              <button class="btn btn-primary btn-sm" :disabled="settingsModal.saving" @click="saveSettings">
+                {{ settingsModal.saving ? 'Saving…' : 'Save' }}
+              </button>
+            </div>
+          </template>
+
+        </div>
+      </div>
+    </teleport>
     </main>
   `
 }
