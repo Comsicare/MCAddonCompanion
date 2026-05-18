@@ -635,28 +635,28 @@ class Api:
         mod_tags = params.get("mod_tags", {})  # {filename: "required"|"client"|"server"}
 
         if not pack_name:
-            self._emit({"type": "summary", "text": "Pack name is required.", "tone": "error"})
+            self._emit({"type": "summary", "flow": "publish", "text": "Pack name is required.", "tone": "error"})
             return
         if not version:
-            self._emit({"type": "summary", "text": "Version is required.", "tone": "error"})
+            self._emit({"type": "summary", "flow": "publish", "text": "Version is required.", "tone": "error"})
             return
 
         repos = get_pack_registry_repos()
         repo = next((r for r in repos if r["id"] == repo_id), None)
         if not repo:
-            self._emit({"type": "summary", "text": "Repo not found.", "tone": "error"})
+            self._emit({"type": "summary", "flow": "publish", "text": "Repo not found.", "tone": "error"})
             return
 
         mc_dir = get_minecraft_dir(INST_DIR, inst_name)
         if not mc_dir:
-            self._emit({"type": "summary", "text": "Instance not found.", "tone": "error"})
+            self._emit({"type": "summary", "flow": "publish", "text": "Instance not found.", "tone": "error"})
             return
 
         slug = _slugify(pack_name)
 
         def _run():
             try:
-                self._emit({"type": "reset"})
+                self._emit({"type": "reset", "flow": "publish"})
                 instance_dir = INST_DIR / inst_name
                 file_list = get_export_file_list(mc_dir, categories, [])
 
@@ -701,28 +701,28 @@ class Api:
                     "removed_mods": removed_mods,
                 }
 
-                self._emit({"type": "step", "step": 0, "state": "running", "detail": ""})
+                self._emit({"type": "step", "flow": "publish", "step": 0, "state": "running", "detail": ""})
                 with tempfile.TemporaryDirectory() as tmp:
                     zip_path = Path(tmp) / zip_filename
                     build_export_zip(inst_name, mc_dir, instance_dir, file_list, zip_path)
                     size_mb = zip_path.stat().st_size / 1_048_576
-                    self._emit({"type": "step", "step": 0, "state": "ok", "detail": f"{size_mb:.1f} MB"})
+                    self._emit({"type": "step", "flow": "publish", "step": 0, "state": "ok", "detail": f"{size_mb:.1f} MB"})
 
-                    self._emit({"type": "step", "step": 1, "state": "running", "detail": ""})
+                    self._emit({"type": "step", "flow": "publish", "step": 1, "state": "running", "detail": ""})
                     client.upload_file_path(slug, version, zip_filename, zip_path)
-                    self._emit({"type": "step", "step": 1, "state": "ok", "detail": ""})
+                    self._emit({"type": "step", "flow": "publish", "step": 1, "state": "ok", "detail": ""})
 
-                    self._emit({"type": "step", "step": 2, "state": "running", "detail": ""})
+                    self._emit({"type": "step", "flow": "publish", "step": 2, "state": "running", "detail": ""})
                     client.upload_file(slug, version, "metadata.json",
                                        _json.dumps(metadata, indent=2).encode(),
                                        content_type="application/json")
-                    self._emit({"type": "step", "step": 2, "state": "ok", "detail": ""})
+                    self._emit({"type": "step", "flow": "publish", "step": 2, "state": "ok", "detail": ""})
 
-                self._emit({"type": "summary",
+                self._emit({"type": "summary", "flow": "publish",
                             "text": f"Published {pack_name} v{version}.",
                             "tone": "ok"})
             except Exception as e:
-                self._emit({"type": "summary", "text": f"Error: {e}", "tone": "error"})
+                self._emit({"type": "summary", "flow": "publish", "text": f"Error: {e}", "tone": "error"})
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -741,20 +741,20 @@ class Api:
         repos = get_pack_registry_repos()
         repo = next((r for r in repos if r["id"] == repo_id), None)
         if not repo:
-            self._emit({"type": "summary", "text": "Repo not found.", "tone": "error"})
+            self._emit({"type": "summary", "flow": "install", "text": "Repo not found.", "tone": "error"})
             return
 
         slug = _slugify(pack_name)
 
         def _run():
             try:
-                self._emit({"type": "reset"})
+                self._emit({"type": "reset", "flow": "install"})
                 from core.gitlab import GitLabClient
                 client = GitLabClient(repo["base_url"], repo["project_id"],
                                       repo.get("upload_token"), repo.get("read_token"))
 
                 # Step 0: Download zip
-                self._emit({"type": "step", "step": 0, "state": "running", "detail": ""})
+                self._emit({"type": "step", "flow": "install", "step": 0, "state": "running", "detail": ""})
                 zip_filename = f"{slug}-{version}.zip"
                 url = client.build_download_url(slug, version, zip_filename)
                 req = urllib.request.Request(url)
@@ -764,14 +764,14 @@ class Api:
                 with urllib.request.urlopen(req, timeout=120) as resp:
                     data = resp.read()
                 size_mb = len(data) / 1_048_576
-                self._emit({"type": "step", "step": 0, "state": "ok", "detail": f"{size_mb:.1f} MB"})
+                self._emit({"type": "step", "flow": "install", "step": 0, "state": "ok", "detail": f"{size_mb:.1f} MB"})
 
                 # Fetch metadata for removed_mods and instance files
                 meta = client.get_metadata(slug, version)
                 removed_mods = meta.get("removed_mods", [])
 
                 # Step 1: Extract
-                self._emit({"type": "step", "step": 1, "state": "running", "detail": ""})
+                self._emit({"type": "step", "flow": "install", "step": 1, "state": "running", "detail": ""})
                 inst_dir = INSTANCES_DIR / inst_name
                 existing_mc = get_minecraft_dir(INSTANCES_DIR, inst_name)
                 if existing_mc:
@@ -814,10 +814,10 @@ class Api:
                         with zf.open(member) as src, open(dest, "wb") as dst:
                             dst.write(src.read())
                         count += 1
-                self._emit({"type": "step", "step": 1, "state": "ok", "detail": f"{count} files"})
+                self._emit({"type": "step", "flow": "install", "step": 1, "state": "ok", "detail": f"{count} files"})
 
                 # Step 2: Write Prism instance files (only for new instances)
-                self._emit({"type": "step", "step": 2, "state": "running", "detail": ""})
+                self._emit({"type": "step", "flow": "install", "step": 2, "state": "running", "detail": ""})
                 if mode == "new":
                     mc_ver = meta.get("mc_version", "")
                     loader = meta.get("loader", "fabric")
@@ -848,7 +848,7 @@ class Api:
                             "formatVersion": 1,
                         }
                         mmc_path.write_text(_json.dumps(mmc_pack, indent=2), encoding="utf-8")
-                self._emit({"type": "step", "step": 2, "state": "ok", "detail": ""})
+                self._emit({"type": "step", "flow": "install", "step": 2, "state": "ok", "detail": ""})
 
                 # Always record install; optionally track for updates
                 from core.state import add_tracked_pack
@@ -868,9 +868,9 @@ class Api:
                         "installed_version": version,
                     })
 
-                self._emit({"type": "summary", "text": f"Installed {pack_name} v{version}.", "tone": "ok"})
+                self._emit({"type": "summary", "flow": "install", "text": f"Installed {pack_name} v{version}.", "tone": "ok"})
             except Exception as e:
-                self._emit({"type": "summary", "text": f"Error: {e}", "tone": "error"})
+                self._emit({"type": "summary", "flow": "install", "text": f"Error: {e}", "tone": "error"})
 
         threading.Thread(target=_run, daemon=True).start()
 
