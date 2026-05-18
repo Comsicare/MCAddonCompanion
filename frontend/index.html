@@ -11,6 +11,10 @@
 </head>
 <body>
   <div id="app"></div>
+  <script>
+    window.addEventListener('error', e => { document.body.insertAdjacentHTML('beforeend','<pre style="position:fixed;bottom:0;left:0;right:0;color:red;background:#111;padding:10px;font-size:11px;z-index:9999;white-space:pre-wrap">' + e.message + ' @ ' + e.filename + ':' + e.lineno + '</pre>') })
+    window.addEventListener('unhandledrejection', e => { document.body.insertAdjacentHTML('beforeend','<pre style="position:fixed;bottom:0;left:0;right:0;color:orange;background:#111;padding:10px;font-size:11px;z-index:9999;white-space:pre-wrap">Rejection: ' + (e.reason?.stack||e.reason) + '</pre>') })
+  </script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

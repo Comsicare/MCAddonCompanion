@@ -334,9 +334,9 @@ export default {
                     <span v-else style="display:inline-flex;width:8px;height:8px;border-radius:8px;border:1.5px solid var(--text-3);opacity:.7"></span>
                   </td>
                   <td><span class="mono fs-12 text-2">—</span></td>
-                  <td style="text-align:right" @click.stop>
+                  <td style="text-align:right">
                     <div class="flex items-center gap-4" style="justify-content:flex-end">
-                      <button class="icon-btn" title="Settings" @click="openSettings(inst.name)"><span v-html="icon('settings',14)"></span></button>
+                      <button class="icon-btn" title="Settings" @click.stop="openSettings(inst.name)"><span v-html="icon('settings',14)"></span></button>
                     </div>
                   </td>
                 </tr>
