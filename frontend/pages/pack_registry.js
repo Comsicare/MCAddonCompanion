@@ -1398,9 +1398,9 @@ export default {
               </div>
               <div>
                 <div class="fs-12 text-2 fw-500" style="margin-bottom:8px">Format</div>
-                <div style="display:flex;gap:8px">
-                  <button :class="['btn', 'btn-sm', serverAsZip ? 'btn-primary' : 'btn-ghost']" @click="serverAsZip = true">Save as zip</button>
-                  <button :class="['btn', 'btn-sm', !serverAsZip ? 'btn-primary' : 'btn-ghost']" @click="serverAsZip = false">Extract to folder</button>
+                <div class="sub-tabs">
+                  <button class="sub-tab" :class="{ active: serverAsZip }" @click="serverAsZip = true">Save as zip</button>
+                  <button class="sub-tab" :class="{ active: !serverAsZip }" @click="serverAsZip = false">Extract to folder</button>
                 </div>
               </div>
             </div>
