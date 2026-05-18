@@ -1,6 +1,6 @@
 [Setup]
 AppName=MCAddonCompanion
-AppVersion=0.2.0
+AppVersion=0.2.1
 AppPublisher=Comsicare
 DefaultDirName={localappdata}\MCAddonCompanion
 DefaultGroupName=MCAddonCompanion
@@ -20,7 +20,7 @@ Source: "dist_windows\MCAddonCompanion\*"; DestDir: "{app}"; Flags: ignoreversio
 
 [Icons]
 Name: "{group}\MCAddonCompanion"; Filename: "{app}\MCAddonCompanion.exe"
-Name: "{commondesktop}\MCAddonCompanion"; Filename: "{app}\MCAddonCompanion.exe"; Tasks: desktopicon
+Name: "{userdesktop}\MCAddonCompanion"; Filename: "{app}\MCAddonCompanion.exe"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"

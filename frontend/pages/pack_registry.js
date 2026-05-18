@@ -13,6 +13,7 @@ export default {
     // ── Instances tab ────────────────────────────────────────────────────────
     const installedInstances = ref([])
     const instancesLoading = ref(false)
+    const preparingInstall = ref(false)  // true while fetching metadata before modal opens
     const loadInstalledInstances = async () => {
       instancesLoading.value = true
       try {
@@ -74,6 +75,8 @@ export default {
     }
 
     const installUpdate = async (inst) => {
+      if (preparingInstall.value) return
+      preparingInstall.value = true
       try {
         await window.__apiReady
         const conflicts = await window.pywebview.api.check_conflicts(
@@ -101,6 +104,7 @@ export default {
         }
         openUpdateModal(params, removedMods, false)
       } catch(e) {}
+      preparingInstall.value = false
     }
     const icon = (name, size = 16) => window.__icon(name, size)
 
@@ -406,42 +410,48 @@ export default {
     }
 
     const checkAndInstall = async () => {
-      if (installMode.value === 'existing' && installExistingInstance.value) {
-        try {
-          await window.__apiReady
-          const conflicts = await window.pywebview.api.check_conflicts(
-            browseRepoId.value,
-            selectedPack.value,
-            selectedVersionObj.value.version,
-            installExistingInstance.value
-          )
-          if (conflicts.length) {
-            conflictGroups.value = groupConflicts(conflicts)
-            conflictInstallParams.value = {
-              repo_id: browseRepoId.value,
-              pack_name: selectedPack.value,
-              version: selectedVersionObj.value.version,
-              instance_name: installExistingInstance.value,
-              mode: 'existing',
-              track: trackOnInstall.value,
+      if (preparingInstall.value) return
+      preparingInstall.value = true
+      try {
+        if (installMode.value === 'existing' && installExistingInstance.value) {
+          try {
+            await window.__apiReady
+            const conflicts = await window.pywebview.api.check_conflicts(
+              browseRepoId.value,
+              selectedPack.value,
+              selectedVersionObj.value.version,
+              installExistingInstance.value
+            )
+            if (conflicts.length) {
+              conflictGroups.value = groupConflicts(conflicts)
+              conflictInstallParams.value = {
+                repo_id: browseRepoId.value,
+                pack_name: selectedPack.value,
+                version: selectedVersionObj.value.version,
+                instance_name: installExistingInstance.value,
+                mode: 'existing',
+                track: trackOnInstall.value,
+              }
+              showConflictModal.value = true
+              return
             }
-            showConflictModal.value = true
-            return
-          }
-        } catch(e) {}
+          } catch(e) {}
+        }
+        const instName = installMode.value === 'new'
+          ? installInstanceName.value
+          : installExistingInstance.value
+        openClientModReview({
+          repo_id: browseRepoId.value,
+          pack_name: selectedPack.value,
+          version: selectedVersionObj.value.version,
+          instance_name: instName,
+          mode: installMode.value,
+          track: trackOnInstall.value,
+          skip_files: [],
+        })
+      } finally {
+        preparingInstall.value = false
       }
-      const instName = installMode.value === 'new'
-        ? installInstanceName.value
-        : installExistingInstance.value
-      openClientModReview({
-        repo_id: browseRepoId.value,
-        pack_name: selectedPack.value,
-        version: selectedVersionObj.value.version,
-        instance_name: instName,
-        mode: installMode.value,
-        track: trackOnInstall.value,
-        skip_files: [],
-      })
     }
 
     const openClientModReview = (params) => {
@@ -762,6 +772,7 @@ export default {
       showServerModal, serverModalStep, serverDest, serverAsZip, serverIncludeConfig,
       serverProgress, serverSummary, SERVER_PACK_STEPS,
       openServerModal, pickServerFolder, startServerDownload,
+      preparingInstall,
       installMode, installInstanceName, installExistingInstance,
       INSTALL_STEPS,
       selectPack, selectVersion, checkAndInstall, modDiff,
@@ -1134,9 +1145,12 @@ export default {
                     Track for updates (auto-update prompt on game launch)
                   </label>
 
-                  <button class="btn btn-primary btn-sm flex items-center gap-8" @click="checkAndInstall">
-                    <span v-html="icon('download', 13)"></span>
-                    Install
+                  <button class="btn btn-primary btn-sm flex items-center gap-8" @click="checkAndInstall" :disabled="preparingInstall">
+                    <span v-if="preparingInstall" style="opacity:.6">Preparing…</span>
+                    <template v-else>
+                      <span v-html="icon('download', 13)"></span>
+                      Install
+                    </template>
                   </button>
                 </div>
               </div>
@@ -1228,8 +1242,9 @@ export default {
                         <button class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--err);border-color:var(--err)" @click="removeInstalledRecord(inst.instance_name)">Remove</button>
                       </template>
                       <template v-else>
-                        <button v-if="inst.has_update" class="btn btn-primary btn-sm flex items-center gap-4" style="font-size:11px" @click="installUpdate(inst)">
-                          <span v-html="icon('download', 11)"></span> {{ inst.latest_version }}
+                        <button v-if="inst.has_update" class="btn btn-primary btn-sm flex items-center gap-4" style="font-size:11px" @click="installUpdate(inst)" :disabled="preparingInstall">
+                          <span v-if="preparingInstall" style="opacity:.6">…</span>
+                          <template v-else><span v-html="icon('download', 11)"></span> {{ inst.latest_version }}</template>
                         </button>
                         <span v-else class="tag text-3 fs-11">up to date</span>
                         <button v-if="inst.tracked" class="btn btn-ghost btn-sm" style="font-size:11px" @click="untrackInstance(inst.instance_name)">Untrack</button>

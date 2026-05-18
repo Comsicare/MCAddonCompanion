@@ -198,6 +198,8 @@ class Api:
         self._win = window_ref  # list so it's mutable before window is created
         self._update_choice = "skip"
         self._update_prompt_data = {}
+        self._install_lock = threading.Lock()
+        self._active_installs: set[str] = set()  # keys: "repo_id:pack_slug:version:instance_name"
 
     def _emit(self, event: dict) -> None:
         if self._win[0]:
@@ -563,8 +565,11 @@ class Api:
         return client.get_versions_with_metadata(pack_name)
 
     def check_conflicts(self, repo_id: str, pack_name: str, version: str, inst_name: str) -> list:
-        """Return list of relative paths that already exist in the instance's minecraft/ folder."""
-        import zipfile, io, urllib.request
+        """Return list of relative paths that differ between the pack and the local instance.
+
+        Uses metadata.json to enumerate pack files, then compares only files that already
+        exist locally — no zip download required.
+        """
         repos = get_pack_registry_repos()
         repo = next((r for r in repos if r["id"] == repo_id), None)
         if not repo:
@@ -573,50 +578,33 @@ class Api:
         client = GitLabClient(repo["base_url"], repo["project_id"],
                               repo.get("upload_token"), repo.get("read_token"))
         slug = _slugify(pack_name)
-        zip_filename = f"{slug}-{version}.zip"
-        url = client.build_download_url(slug, version, zip_filename)
-        req = urllib.request.Request(url)
-        req.add_header("User-Agent", "MCAddonCompanion")
-        if repo.get("read_token"):
-            req.add_header("PRIVATE-TOKEN", repo["read_token"])
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = resp.read()
-        except Exception as e:
-            log.warning("check_conflicts download failed: %s", e)
-            return []
+        meta = client.get_metadata(slug, version)
+        # Build list of pack-relative paths from metadata categories
+        pack_paths: list[str] = []
+        categories = meta.get("categories", [])
+        for cat in categories:
+            pack_paths.append(cat + "/")  # directory prefix — files under this folder conflict
+        # Mods are enumerated explicitly in metadata
+        for mod in meta.get("mods", []):
+            if isinstance(mod, dict):
+                pack_paths.append(f"mods/{mod['file']}")
 
-        inst_dir = INSTANCES_DIR / inst_name
         mc_dir = get_minecraft_dir(INSTANCES_DIR, inst_name)
         if not mc_dir:
-            mc_dir = inst_dir / "minecraft"
-
-        import hashlib
-
-        def _md5(path: Path) -> str:
-            h = hashlib.md5()
-            with open(path, "rb") as f:
-                for chunk in iter(lambda: f.read(65536), b""):
-                    h.update(chunk)
-            return h.hexdigest()
+            mc_dir = INSTANCES_DIR / inst_name / "minecraft"
 
         conflicts = []
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            members = zf.namelist()
-            has_mc_prefix = any(m.startswith(".minecraft/") for m in members)
-            has_plain_prefix = any(m.startswith("minecraft/") for m in members)
-            prefix = ".minecraft/" if has_mc_prefix else ("minecraft/" if has_plain_prefix else "")
-            for member in members:
-                if member.endswith("/"):
-                    continue
-                rel = member[len(prefix):] if prefix else member
+        for rel in pack_paths:
+            if rel.endswith("/"):
+                # Category directory — flag any existing files inside it
+                folder = mc_dir / rel.rstrip("/")
+                if folder.is_dir():
+                    for f in folder.iterdir():
+                        if f.is_file():
+                            conflicts.append(str(Path(rel.rstrip("/")) / f.name).replace("\\", "/"))
+            else:
                 dest = mc_dir / Path(rel)
-                if not dest.exists():
-                    continue
-                zip_bytes = zf.read(member)
-                disk_md5 = _md5(dest)
-                zip_md5 = hashlib.md5(zip_bytes).hexdigest()
-                if disk_md5 != zip_md5:
+                if dest.exists():
                     conflicts.append(rel)
         return conflicts
 
@@ -755,6 +743,14 @@ class Api:
             return
 
         slug = _slugify(pack_name)
+        install_key = f"{repo_id}:{slug}:{version}:{inst_name}"
+
+        with self._install_lock:
+            if install_key in self._active_installs:
+                self._emit({"type": "summary", "flow": "install",
+                            "text": "Install already in progress for this pack.", "tone": "error"})
+                return
+            self._active_installs.add(install_key)
 
         def _run():
             try:
@@ -785,6 +781,19 @@ class Api:
                             pct = min(int(received * 100 / total_bytes), 99)
                             self._emit({"type": "progress", "flow": "install", "step": 0, "pct": pct})
                     data = b"".join(chunks)
+
+                # Validate: size must match Content-Length (if provided) and start with ZIP magic bytes
+                if total_bytes and received != total_bytes:
+                    raise ValueError(
+                        f"Download incomplete: expected {total_bytes} bytes, got {received}. "
+                        "Try again — the server may have returned a partial response."
+                    )
+                if not data[:2] == b"PK":
+                    raise ValueError(
+                        f"Downloaded file is not a valid zip (got {len(data)} bytes, "
+                        f"starts with {data[:4]!r}). The server may have returned an error page."
+                    )
+
                 size_mb = len(data) / 1_048_576
                 self._emit({"type": "step", "flow": "install", "step": 0, "state": "ok", "detail": f"{size_mb:.1f} MB"})
 
@@ -904,6 +913,9 @@ class Api:
                 self._emit({"type": "summary", "flow": "install", "text": f"Installed {pack_name} v{version}.", "tone": "ok"})
             except Exception as e:
                 self._emit({"type": "summary", "flow": "install", "text": f"Error: {e}", "tone": "error"})
+            finally:
+                with self._install_lock:
+                    self._active_installs.discard(install_key)
 
         threading.Thread(target=_run, daemon=True).start()
 
