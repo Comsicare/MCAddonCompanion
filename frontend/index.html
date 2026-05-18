@@ -11,10 +11,6 @@
 </head>
 <body>
   <div id="app"></div>
-  <script>
-    window.addEventListener('error', e => { document.body.innerHTML = '<pre style="color:red;padding:20px;white-space:pre-wrap">' + e.message + '\n' + (e.filename||'') + ':' + e.lineno + '\n' + (e.error?.stack||'') + '</pre>' })
-    window.addEventListener('unhandledrejection', e => { document.body.innerHTML = '<pre style="color:orange;padding:20px;white-space:pre-wrap">Unhandled rejection:\n' + (e.reason?.stack || e.reason) + '</pre>' })
-  </script>
   <script type="module" src="app.js"></script>
 </body>
 </html>
