@@ -428,7 +428,10 @@ class Api:
                 ]
                 found = [p for p in sqlite_paths if p.exists()]
                 if found:
-                    size = sum(p.stat().st_size for p in found)
+                    try:
+                        size = sum(p.stat().st_size for p in found)
+                    except Exception:
+                        size = 0
                     rel = "saves/" + world_dir.name
                     dh_entries.append({
                         "type": "world",
@@ -503,16 +506,21 @@ class Api:
                     copied_bytes = 0
                     last_pct = 0
                     last_emit_t = 0.0
+                    errors_copy = []
                     for src, rel in to_copy:
                         dest = sync_dir / rel
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(str(src), str(dest))
-                        stat = _file_stat(dest)
-                        new_manifest[rel] = stat
-                        fsize = stat.get("size", 0)
-                        synced_bytes += fsize
-                        copied_bytes += fsize
-                        files_copied += 1
+                        try:
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(str(src), str(dest))
+                            stat = _file_stat(dest)
+                            new_manifest[rel] = stat
+                            fsize = stat.get("size", 0)
+                            synced_bytes += fsize
+                            copied_bytes += fsize
+                            files_copied += 1
+                        except Exception as copy_err:
+                            errors_copy.append(f"{rel}: {copy_err}")
+                            log.warning("archive copy failed for %s: %s", rel, copy_err)
                         pct = min(99, int(copied_bytes / total_bytes * 100))
                         now = time.monotonic()
                         if pct != last_pct and (now - last_emit_t) >= 0.5:
@@ -543,6 +551,7 @@ class Api:
                         rel = f.relative_to(mc_dir).as_posix()
                         return any(rel == p or rel.startswith(p.rstrip('/') + '/') for p in _zip_excl)
                     except ValueError:
+                        log.warning("_zip_excluded: file %s is not under mc_dir %s, skipping exclusion check", f, mc_dir)
                         return False
                 zip_files = [f for f in inst_dir.rglob("*") if f.is_file() and not _zip_excluded(f)]
                 total_zip_bytes = sum(f.stat().st_size for f in zip_files) or 1
@@ -775,16 +784,21 @@ class Api:
                     copied_bytes = 0
                     last_pct = 0
                     last_emit_t = 0.0
+                    errors_copy = []
                     for src, rel in to_copy:
                         dest = sync_dir / rel
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(str(src), str(dest))
-                        stat = _file_stat(dest)
-                        new_manifest[rel] = stat
-                        fsize = stat.get("size", 0)
-                        synced_bytes += fsize
-                        copied_bytes += fsize
-                        files_copied += 1
+                        try:
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(str(src), str(dest))
+                            stat = _file_stat(dest)
+                            new_manifest[rel] = stat
+                            fsize = stat.get("size", 0)
+                            synced_bytes += fsize
+                            copied_bytes += fsize
+                            files_copied += 1
+                        except Exception as copy_err:
+                            errors_copy.append(f"{rel}: {copy_err}")
+                            log.warning("archive copy failed for %s: %s", rel, copy_err)
                         pct = min(99, int(copied_bytes / total_bytes * 100))
                         now = time.monotonic()
                         if pct != last_pct and (now - last_emit_t) >= 0.5:
