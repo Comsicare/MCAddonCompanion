@@ -60,6 +60,8 @@ def _check_deletions(
     extra_blacklist: list[str] | None = None,
 ) -> list[str]:
     """Return sorted list of rel paths present in old_manifest but deleted from mc_dir."""
+    if not mc_dir.exists():
+        return sorted(old_manifest.keys())
     current = {
         src.relative_to(mc_dir).as_posix()
         for src in mc_dir.rglob("*")
