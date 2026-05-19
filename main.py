@@ -1921,32 +1921,6 @@ def _run_deletion_prompt(instance_name: str, deletions: list[str]) -> str:
     return api._deletion_choice
 
 
-def _execute_instance_plan_keep(emit, inst: str, plan: dict, keep_paths: list[str]) -> None:
-    """Execute exit sync keeping deleted files in sync folder (not pruned)."""
-    from modules.instance_sync.sync import run_exit_sync
-    from modules.schematic_sync.page import run_autosync as _ss_run_autosync
-
-    step = 0
-    if plan["schematic"]:
-        emit({"type": "step", "step": step, "state": "running", "detail": ""})
-        result = _ss_run_autosync([inst])
-        errors = result.get("errors", [])
-        emit({"type": "step", "step": step, "state": "error" if errors else "ok",
-              "detail": f"{result.get('pulled', 0) + result.get('pushed', 0)} files"})
-        step += 1
-
-    if plan["instance_task"] == "Exit Sync":
-        emit({"type": "step", "step": step, "state": "running", "detail": ""})
-        result = run_exit_sync(
-            inst,
-            plan["mc_dir"],
-            plan["sync_dir"],
-            keep_paths=keep_paths,
-        )
-        errors = result.get("errors", [])
-        emit({"type": "step", "step": step, "state": "error" if errors else "ok",
-              "detail": f"{result.get('copied', 0)} copied"})
-
 
 def _headless_autosync(name: str) -> None:
     from modules.instance_sync.sync import read_manifest, _check_deletions
@@ -1966,11 +1940,20 @@ def _headless_autosync(name: str) -> None:
                 log.info("Deletion prompt choice for %r: %s", name, choice)
                 if choice == "cancel":
                     sys.exit(0)
-                elif choice == "keep":
-                    def _noop(event): pass
-                    _execute_instance_plan_keep(_noop, name, plan, keep_paths=deletions)
-                    sys.exit(0)
-                # choice == "sync": fall through to normal execution
+                elif choice == "restore":
+                    import shutil
+                    for rel in deletions:
+                        src = plan["sync_dir"] / rel
+                        dest = plan["mc_dir"] / rel
+                        if src.exists():
+                            try:
+                                dest.parent.mkdir(parents=True, exist_ok=True)
+                                shutil.copy2(str(src), str(dest))
+                                log.info("Restored %s to instance", rel)
+                            except Exception as e:
+                                log.warning("Failed to restore %s: %s", rel, e)
+                    # fall through to normal exit sync — files are back, nothing to prune
+                # choice == "delete": fall through to normal exit sync (prunes deletions)
 
     def _noop(event): pass
     _execute_instance_plan(_noop, name, plan)

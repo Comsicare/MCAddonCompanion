@@ -103,7 +103,6 @@ def run_exit_sync(
     extra_blacklist: list[str] | None = None,
     on_progress=None,
     exclude_paths: list[str] | None = None,
-    keep_paths: list[str] | None = None,
 ) -> dict:
     """
     Copy .minecraft/ tree to sync_instance_dir, skipping blacklisted files.
@@ -155,10 +154,7 @@ def run_exit_sync(
             on_progress(copied + unchanged, total)
 
     # Prune stale files from sync folder (deleted from instance since last sync)
-    _keep = set(keep_paths or [])
     for stale_rel in set(old_manifest) - set(new_manifest):
-        if stale_rel in _keep:
-            continue
         stale = sync_instance_dir / stale_rel
         try:
             if stale.exists():
@@ -195,6 +191,7 @@ def _append_changelog(backup_dir: Path, entry: dict) -> None:
     except Exception as e:
         log.warning("changelog.json unreadable at %s: %s", p, e)
         existing = []
+    p.parent.mkdir(parents=True, exist_ok=True)
     existing.append(entry)
     p.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 

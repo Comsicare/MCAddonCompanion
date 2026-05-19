@@ -56,13 +56,13 @@ export default {
 
         <div style="display:flex;gap:8px">
           <button class="btn btn-ghost btn-sm" style="flex:1;font-size:11px" @click="choose('cancel')">
-            Cancel sync
+            Cancel
           </button>
-          <button class="btn btn-ghost btn-sm" style="flex:1;font-size:11px" @click="choose('keep')">
-            Keep in sync
+          <button class="btn btn-ghost btn-sm" style="flex:1;font-size:11px" @click="choose('restore')">
+            Restore File
           </button>
-          <button class="btn btn-primary btn-sm" style="flex:1;font-size:11px" @click="choose('sync')">
-            Sync deletions
+          <button class="btn btn-primary btn-sm" style="flex:1;font-size:11px" @click="choose('delete')">
+            Delete File
           </button>
         </div>
       </template>
