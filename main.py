@@ -735,6 +735,93 @@ class Api:
             log.error("save_instance_settings failed for %s: %s", instance_name, e)
             return {"error": str(e)}
 
+    def log_js_error(self, level: str, message: str) -> None:
+        js_log = logging.getLogger("js")
+        lvl = {
+            "debug": logging.DEBUG,
+            "info": logging.INFO,
+            "warning": logging.WARNING,
+            "error": logging.ERROR,
+        }.get(str(level).lower(), logging.ERROR)
+        js_log.log(lvl, message)
+
+    def __raw_log(self, level: str, message: str) -> None:
+        """Direct log bypass used by the JS API proxy — must not be wrapped by the proxy itself."""
+        self.log_js_error(level, message)
+
+    def create_debug_dump(self) -> dict:
+        import zipfile
+        import json as _json
+        from datetime import datetime
+
+        try:
+            if sys.platform == "win32":
+                log_dir = pathlib.Path(os.environ.get("LOCALAPPDATA", os.environ.get("APPDATA", "."))) / "MCAddonCompanion" / "logs"
+                state_path = pathlib.Path(os.environ.get("APPDATA", ".")) / "MCAddonCompanion" / "state.json"
+            else:
+                xdg = os.environ.get("XDG_DATA_HOME", str(pathlib.Path.home() / ".local/share"))
+                log_dir = pathlib.Path(xdg) / "MCAddonCompanion" / "logs"
+                state_path = log_dir.parent / "state.json"
+
+            # Dev mode: prefer local state.json next to main.py
+            local_state = Path(__file__).parent / "state.json"
+            if local_state.exists():
+                state_path = local_state
+
+            downloads = Path.home() / "Downloads"
+            downloads.mkdir(exist_ok=True)
+            ts = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+            zip_name = f"mcaddoncompanion-debug-{ts}.zip"
+            zip_path = downloads / zip_name
+
+            def _redact(obj):
+                if isinstance(obj, dict):
+                    return {
+                        k: "***" if any(s in k.lower() for s in ("pat", "token", "secret", "password"))
+                        else _redact(v)
+                        for k, v in obj.items()
+                    }
+                if isinstance(obj, list):
+                    return [_redact(i) for i in obj]
+                return obj
+
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                # Logs
+                if log_dir.exists():
+                    for f in log_dir.iterdir():
+                        if f.is_file():
+                            zf.write(f, f"logs/{f.name}")
+
+                # Redacted state
+                if state_path.exists():
+                    try:
+                        raw = _json.loads(state_path.read_text(encoding="utf-8"))
+                        redacted = _redact(raw)
+                        zf.writestr("state_redacted.json", _json.dumps(redacted, indent=2))
+                    except Exception as e:
+                        zf.writestr("state_redacted.json", _json.dumps({"error": str(e)}))
+
+                # System info
+                info = self.get_host_info()
+                info["dump_timestamp"] = datetime.now().isoformat()
+                zf.writestr("system_info.json", _json.dumps(info, indent=2))
+
+            log.info("Debug dump created: %s", zip_path)
+
+            # Open Downloads folder
+            if sys.platform == "win32":
+                import subprocess
+                subprocess.Popen(["explorer", str(downloads)])
+            elif sys.platform == "darwin":
+                import subprocess
+                subprocess.Popen(["open", str(downloads)])
+
+            return {"ok": True, "filename": zip_name}
+
+        except Exception as e:
+            log.error("create_debug_dump failed: %s", e)
+            return {"ok": False, "error": str(e)}
+
     def set_instance_default(self, key: str, value: bool) -> None:
         state = load_state()
         state.setdefault("instance_sync", {}).setdefault("defaults", {})[key] = value
