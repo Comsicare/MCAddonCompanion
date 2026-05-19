@@ -54,6 +54,20 @@ def _file_stat(path: Path) -> dict:
     return {"mtime": stat.st_mtime, "size": stat.st_size}
 
 
+def _check_deletions(
+    mc_dir: Path,
+    old_manifest: dict,
+    extra_blacklist: list[str] | None = None,
+) -> list[str]:
+    """Return sorted list of rel paths present in old_manifest but deleted from mc_dir."""
+    current = {
+        src.relative_to(mc_dir).as_posix()
+        for src in mc_dir.rglob("*")
+        if src.is_file() and not is_blacklisted(src.relative_to(mc_dir).as_posix(), extra_blacklist)
+    }
+    return sorted(set(old_manifest.keys()) - current)
+
+
 def read_last_result(sync_instance_dir: Path) -> dict:
     """Read last_result.json from sync folder. Returns {} if missing or corrupt."""
     p = sync_instance_dir / "last_result.json"
@@ -87,6 +101,7 @@ def run_exit_sync(
     extra_blacklist: list[str] | None = None,
     on_progress=None,
     exclude_paths: list[str] | None = None,
+    keep_paths: list[str] | None = None,
 ) -> dict:
     """
     Copy .minecraft/ tree to sync_instance_dir, skipping blacklisted files.
@@ -138,7 +153,10 @@ def run_exit_sync(
             on_progress(copied + unchanged, total)
 
     # Prune stale files from sync folder (deleted from instance since last sync)
+    _keep = set(keep_paths or [])
     for stale_rel in set(old_manifest) - set(new_manifest):
+        if stale_rel in _keep:
+            continue
         stale = sync_instance_dir / stale_rel
         try:
             if stale.exists():
