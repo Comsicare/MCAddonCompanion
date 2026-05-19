@@ -111,12 +111,12 @@ export default {
 
       const prevHandler = window.__onProgress
       window.__onProgress = async (event) => {
-        if (event.type === 'archive_log') {
-          archiveModal.value.logs = [...archiveModal.value.logs, event.line]
-        } else if (event.type === 'archive_progress') {
+        if (event.type === 'archive_progress') {
           const running = archiveModal.value.steps.find(s => s.state === 'run')
           if (running) running.pct = event.pct
         } else if (event.type === 'archive_step') {
+          // prev_log is the completed log line for the step that just finished — atomic with the transition
+          if (event.prev_log != null) archiveModal.value.logs = [...archiveModal.value.logs, event.prev_log]
           const steps = archiveModal.value.steps
           const runIdx = steps.findIndex(s => s.state === 'run')
           if (runIdx >= 0) { steps[runIdx].state = 'done'; steps[runIdx].pct = null }
@@ -128,8 +128,9 @@ export default {
           if (event.ok) {
             steps.forEach(s => { if (s.state !== 'done') s.state = 'done' })
             archiveModal.value.error = false
-            archiveModal.value.done = true  // show Close immediately
-            load()  // refresh list in background
+            if (event.logs) archiveModal.value.logs = [...archiveModal.value.logs, ...event.logs]
+            archiveModal.value.done = true
+            load()
           } else {
             const running = steps.find(s => s.state === 'run')
             if (running) running.state = 'err'
