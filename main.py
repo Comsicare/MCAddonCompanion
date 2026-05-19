@@ -185,9 +185,8 @@ def _execute_instance_plan(emit, inst: str, plan: dict):
 
     elif plan["instance_task"] == "Startup Sync":
         from modules.instance_sync.sync import run_startup_sync
-        cfg = plan["cfg"]
         emit({"type": "step", "step": step, "state": "running", "detail": ""})
-        result = run_startup_sync(inst, cfg)
+        result = run_startup_sync(inst, plan["mc_dir"], plan["sync_dir"])
         errors = result.get("errors", [])
         emit({"type": "step", "step": step, "state": "error" if errors else "ok",
               "detail": f"{result.get('restored', 0)} files"})
@@ -211,6 +210,8 @@ class Api:
         self._win = window_ref  # list so it's mutable before window is created
         self._update_choice = "skip"
         self._update_prompt_data = {}
+        self._deletion_choice = "cancel"
+        self._deletion_data = {}
         self._install_lock = threading.Lock()
         self._active_installs: set[str] = set()  # keys: "repo_id:pack_slug:version:instance_name"
 
@@ -1751,6 +1752,14 @@ class Api:
         if win:
             win.destroy()
 
+    def get_deletion_data(self) -> dict:
+        return self._deletion_data
+
+    def set_deletion_choice(self, choice: str) -> None:
+        self._deletion_choice = choice
+        if self._win[0]:
+            self._win[0].destroy()
+
     def pick_folder(self) -> str | None:
         import webview as _webview
         result = _webview.windows[0].create_file_dialog(_webview.FOLDER_DIALOG)
@@ -1886,12 +1895,82 @@ class Api:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _run_deletion_prompt(instance_name: str, deletions: list[str]) -> str:
+    """Open a PyWebView window listing deleted files. Returns 'sync' | 'keep' | 'cancel'."""
+    win_ref: list = [None]
+    api = Api(win_ref)
+    api._deletion_data = {
+        "instance": instance_name,
+        "deleted": deletions,
+        "timeout": 30,
+    }
+    api._deletion_choice = "cancel"
+
+    frontend_dir = Path(__file__).parent / "frontend"
+    window = webview.create_window(
+        f"Sync deletions? - {instance_name}",
+        url=str(frontend_dir / "index.html") + "?mode=deletion_prompt",
+        js_api=api,
+        width=480,
+        height=440,
+        resizable=False,
+    )
+    win_ref[0] = window
+    webview.start(debug=not getattr(sys, "frozen", False))
+    return api._deletion_choice
+
+
+def _execute_instance_plan_keep(emit, inst: str, plan: dict, keep_paths: list[str]) -> None:
+    """Execute exit sync keeping deleted files in sync folder (not pruned)."""
+    from modules.instance_sync.sync import run_exit_sync
+    from modules.schematic_sync.page import run_autosync as _ss_run_autosync
+
+    step = 0
+    if plan["schematic"]:
+        emit({"type": "step", "step": step, "state": "running", "detail": ""})
+        result = _ss_run_autosync([inst])
+        errors = result.get("errors", [])
+        emit({"type": "step", "step": step, "state": "error" if errors else "ok",
+              "detail": f"{result.get('pulled', 0) + result.get('pushed', 0)} files"})
+        step += 1
+
+    if plan["instance_task"] == "Exit Sync":
+        emit({"type": "step", "step": step, "state": "running", "detail": ""})
+        result = run_exit_sync(
+            inst,
+            plan["mc_dir"],
+            plan["sync_dir"],
+            keep_paths=keep_paths,
+        )
+        errors = result.get("errors", [])
+        emit({"type": "step", "step": step, "state": "error" if errors else "ok",
+              "detail": f"{result.get('copied', 0)} copied"})
+
+
 def _headless_autosync(name: str) -> None:
+    from modules.instance_sync.sync import read_manifest, _check_deletions
     instances = [d.name for d in INSTANCES_DIR.iterdir() if d.is_dir()] if INSTANCES_DIR.exists() else []
     if name not in instances:
         log.error("Instance %r not found", name)
         sys.exit(1)
     plan = _plan_instance(name, "exit")
+
+    if plan["instance_task"] == "Exit Sync" and plan["mc_dir"] and plan["sync_dir"]:
+        old_manifest = read_manifest(plan["sync_dir"])
+        if old_manifest:
+            deletions = _check_deletions(plan["mc_dir"], old_manifest)
+            if deletions:
+                log.info("Detected %d deletions for %r - opening prompt", len(deletions), name)
+                choice = _run_deletion_prompt(name, deletions)
+                log.info("Deletion prompt choice for %r: %s", name, choice)
+                if choice == "cancel":
+                    sys.exit(0)
+                elif choice == "keep":
+                    def _noop(event): pass
+                    _execute_instance_plan_keep(_noop, name, plan, keep_paths=deletions)
+                    sys.exit(0)
+                # choice == "sync": fall through to normal execution
+
     def _noop(event): pass
     _execute_instance_plan(_noop, name, plan)
     sys.exit(0)
