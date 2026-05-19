@@ -206,7 +206,8 @@ export default {
       const dhExclusions = (excl.exclude_from_sync.length || excl.exclude_from_zip.length) ? excl : null
       preflightISModal.value = null
 
-      const { instance, moveOnly } = archiveModal.value
+      const instance = pf.instName
+      const moveOnly = pf.moveOnly
       const stepLabels = _archiveStepLabels(moveOnly)
       archiveModal.value.steps = stepLabels.map((label, i) => ({ label, state: i === 0 ? 'run' : 'wait', pct: i === 0 ? 0 : null, detail: '' }))
       archiveModal.value.phase = 'progress'
