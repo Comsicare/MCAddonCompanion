@@ -1,8 +1,10 @@
 import { ref, onMounted, onUnmounted, computed } from '../vue.esm-browser.js'
+import ActionModal from '../components/action-modal.js'
 
 export default {
   props: ['progress'],
   emits: ['navigate'],
+  components: { ActionModal },
   setup() {
     const data = ref(null)
     const loading = ref(true)
@@ -87,34 +89,50 @@ export default {
       return `${Math.floor(hrs / 24)}d ago`
     }
 
-    // Archive state
-    const archiveConfirm = ref(null)
-    const archiving = ref(false)
-    const archiveStep = ref('')   // current step label shown in progress view
-    const archiveError = ref(null)
+    // Archive modal (ActionModal-based)
+    const archiveConfirm = ref(null)  // 'archive' | 'move_only' | null — controls inline confirm in danger zone
+    const _makeArchiveModal = () => ({
+      show: false, moveOnly: false, phase: 'summary', done: false, error: false, steps: [], logs: [],
+    })
+    const archiveModal = ref(_makeArchiveModal())
+
+    const closeArchiveModal = () => { archiveModal.value = _makeArchiveModal() }
 
     const doArchive = async (instName, moveOnly) => {
-      archiving.value = true
-      archiveStep.value = 'Starting…'
-      archiveError.value = null
-      // Listen for archive progress events from background thread
+      const stepLabels = moveOnly
+        ? ['Sync files to sync folder', 'Remove instance folder']
+        : ['Sync files to sync folder', 'Create zip backup', 'Remove instance folder']
+      archiveModal.value = {
+        show: true, moveOnly, phase: 'progress', done: false, error: false,
+        steps: stepLabels.map((label, i) => ({ label, state: i === 0 ? 'run' : 'wait', pct: null, detail: '' })),
+        logs: [],
+      }
+      archiveConfirm.value = null
+
       const prevHandler = window.__onProgress
       window.__onProgress = async (event) => {
         if (event.type === 'archive_step') {
-          archiveStep.value = event.step
+          const steps = archiveModal.value.steps
+          const runIdx = steps.findIndex(s => s.state === 'run')
+          if (runIdx >= 0) steps[runIdx].state = 'done'
+          const next = steps.find(s => s.state === 'wait')
+          if (next) next.state = 'run'
         } else if (event.type === 'archive_done') {
           window.__onProgress = prevHandler
+          const steps = archiveModal.value.steps
           if (event.ok) {
+            steps.forEach(s => { if (s.state !== 'done') s.state = 'done' })
+            archiveModal.value.done = true
+            archiveModal.value.error = false
             await load()
-            archiving.value = false
-            archiveStep.value = ''
-            archiveConfirm.value = null
             closeSettings()
+            closeArchiveModal()
           } else {
-            archiving.value = false
-            archiveConfirm.value = null
-            archiveStep.value = ''
-            archiveError.value = event.error || 'Archive failed'
+            const running = steps.find(s => s.state === 'run')
+            if (running) running.state = 'err'
+            archiveModal.value.logs = [event.error || 'Archive failed']
+            archiveModal.value.done = true
+            archiveModal.value.error = true
           }
         } else if (prevHandler) {
           prevHandler(event)
@@ -126,17 +144,15 @@ export default {
         const r = await window.pywebview.api[method](instName)
         if (!r.ok && !r.started) {
           window.__onProgress = prevHandler
-          archiveError.value = r.error || 'Archive failed'
-          archiving.value = false
-          archiveStep.value = ''
-          archiveConfirm.value = null
+          archiveModal.value.logs = [r.error || 'Archive failed']
+          archiveModal.value.done = true
+          archiveModal.value.error = true
         }
       } catch(e) {
         window.__onProgress = prevHandler
-        archiveError.value = String(e)
-        archiving.value = false
-        archiveStep.value = ''
-        archiveConfirm.value = null
+        archiveModal.value.logs = [String(e)]
+        archiveModal.value.done = true
+        archiveModal.value.error = true
       }
     }
 
@@ -193,7 +209,7 @@ export default {
       data, loading, error, query, filtered, syncedCount, load, icon, abbr,
       openInstancesFolder,
       expandedRow, rowDetail, toggleRow, refreshRowDetail, fmtDate,
-      archiveConfirm, archiving, archiveStep, archiveError, doArchive,
+      archiveConfirm, archiveModal, closeArchiveModal, doArchive,
       settingsModal, openSettings, closeSettings, saveSettings,
     }
   },
@@ -562,20 +578,6 @@ export default {
               <div class="danger-zone">
                 <div class="danger-zone-label">Danger Zone</div>
 
-                <!-- Progress view while archiving -->
-                <template v-if="archiving">
-                  <div style="display:flex;flex-direction:column;gap:10px;padding:4px 0">
-                    <div class="flex items-center gap-10">
-                      <span class="spin" v-html="icon('spin',16)"></span>
-                      <span class="fs-13 text-1">{{ archiveStep }}</span>
-                    </div>
-                    <div class="fs-12 text-3">Do not close this window.</div>
-                  </div>
-                </template>
-
-                <template v-else>
-                <div v-if="archiveError" class="fs-12" style="color:var(--err);margin-bottom:8px">{{ archiveError }}</div>
-
                 <!-- Archive (with zip) -->
                 <div style="margin-bottom:8px">
                   <template v-if="archiveConfirm === 'archive'">
@@ -586,7 +588,7 @@ export default {
                     </div>
                   </template>
                   <template v-else>
-                    <button class="btn-danger" @click="archiveConfirm = 'archive'; archiveError = null">
+                    <button class="btn-danger" @click="archiveConfirm = 'archive'">
                       <span v-html="icon('archive',12)"></span> Archive
                     </button>
                     <div class="fs-11 text-3" style="margin-top:4px">Sync + create zip backup + remove from Prism</div>
@@ -596,28 +598,26 @@ export default {
                 <!-- Archive Move Only -->
                 <div>
                   <template v-if="archiveConfirm === 'move_only'">
-                    <div class="fs-12" style="color:var(--err);margin-bottom:6px">⚠ Warning: Without a zip backup, this instance cannot be recovered if the sync folder is lost or corrupted.</div>
+                    <div class="fs-12" style="color:var(--err);margin-bottom:6px">⚠ Warning: No zip backup — cannot recover if sync folder is lost.</div>
                     <div class="flex items-center gap-6">
                       <button class="btn-danger" @click="doArchive(settingsModal.instance, true)">Yes, move only</button>
                       <button class="btn btn-ghost btn-sm" @click="archiveConfirm = null">Cancel</button>
                     </div>
                   </template>
                   <template v-else>
-                    <button class="btn-danger" @click="archiveConfirm = 'move_only'; archiveError = null">
+                    <button class="btn-danger" @click="archiveConfirm = 'move_only'">
                       <span v-html="icon('archive',12)"></span> Archive (Move only)
                     </button>
-                    <div class="fs-11 text-3" style="margin-top:4px">Sync + remove from Prism — no zip backup created</div>
+                    <div class="fs-11 text-3" style="margin-top:4px">Sync + remove from Prism — no zip backup</div>
                   </template>
                 </div>
-
-                </template><!-- end v-else (not archiving) -->
               </div>
 
             </div>
 
             <div style="padding:16px 24px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px">
-              <button class="btn btn-ghost btn-sm" :disabled="archiving" @click="closeSettings">Cancel</button>
-              <button v-if="!archiving" class="btn btn-primary btn-sm" :disabled="settingsModal.saving" @click="saveSettings">
+              <button class="btn btn-ghost btn-sm" @click="closeSettings">Cancel</button>
+              <button class="btn btn-primary btn-sm" :disabled="settingsModal.saving" @click="saveSettings">
                 {{ settingsModal.saving ? 'Saving…' : 'Save' }}
               </button>
             </div>
@@ -626,6 +626,19 @@ export default {
         </div>
       </div>
     </teleport>
+
+    <!-- Archive progress modal -->
+    <action-modal
+      :show="archiveModal.show"
+      :title="'Archiving ' + (settingsModal.instance || '')"
+      phase="progress"
+      :steps="archiveModal.steps"
+      :logs="archiveModal.logs"
+      :done="archiveModal.done"
+      :error="archiveModal.error"
+      @cancel="closeArchiveModal"
+      @retry="doArchive(settingsModal.instance, archiveModal.moveOnly)"
+    />
     </main>
   `
 }

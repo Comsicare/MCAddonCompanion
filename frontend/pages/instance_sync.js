@@ -1,8 +1,10 @@
 import { ref, onMounted, computed } from '../vue.esm-browser.js'
+import ActionModal from '../components/action-modal.js'
 
 export default {
   props: ['progress'],
   emits: ['navigate'],
+  components: { ActionModal },
   setup() {
     const data = ref(null)
     const loading = ref(true)
@@ -145,39 +147,84 @@ export default {
       } catch(e) {}
     }
 
-    // ── Archive / Restore ────────────────────────────────────────────────────
-    const archiveQueue = ref([])       // names queued or in progress
-    const archivingNow = ref(null)     // name currently being archived
-    const archiveResults = ref({})     // {name: {ok, error}} — shown as inline status
-    let _archiveRunning = false
+    // ── Instance gear modal ──────────────────────────────────────────────────
+    const _makeArchiveModal = () => ({
+      show: false, instance: null, moveOnly: false,
+      phase: 'summary', done: false, error: false,
+      steps: [], logs: [],
+    })
+    const archiveModal = ref(_makeArchiveModal())
 
-    const _processArchiveQueue = async () => {
-      if (_archiveRunning) return
-      _archiveRunning = true
-      while (archiveQueue.value.length) {
-        const instName = archiveQueue.value[0]
-        archivingNow.value = instName
-        try {
-          await window.__apiReady
-          const result = await window.pywebview.api.archive_instance(instName)
-          archiveResults.value[instName] = result.ok
-            ? { ok: true, msg: 'Archived successfully' }
-            : { ok: false, msg: result.error || 'Archive failed' }
-          if (result.ok) await load()
-        } catch(e) {
-          archiveResults.value[instName] = { ok: false, msg: String(e) }
-        }
-        archiveQueue.value.shift()
-        archivingNow.value = null
+    const openArchiveModal = (instName, moveOnly) => {
+      archiveModal.value = {
+        show: true, instance: instName, moveOnly,
+        phase: 'summary', done: false, error: false,
+        steps: [], logs: [],
       }
-      _archiveRunning = false
     }
 
-    const archiveInstance = (instName) => {
-      if (archiveQueue.value.includes(instName)) return
-      delete archiveResults.value[instName]
-      archiveQueue.value.push(instName)
-      _processArchiveQueue()
+    const closeArchiveModal = () => { archiveModal.value = _makeArchiveModal() }
+
+    const _archiveStepLabels = (moveOnly) => moveOnly
+      ? ['Sync files to sync folder', 'Remove instance folder']
+      : ['Sync files to sync folder', 'Create zip backup', 'Remove instance folder']
+
+    const _stepFor = (steps, label) => steps.find(s => s.label === label)
+
+    const confirmArchive = async () => {
+      const { instance, moveOnly } = archiveModal.value
+      const stepLabels = _archiveStepLabels(moveOnly)
+      archiveModal.value.steps = stepLabels.map(label => ({ label, state: 'wait', pct: null, detail: '' }))
+      archiveModal.value.phase = 'progress'
+
+      const prevHandler = window.__onProgress
+      window.__onProgress = async (event) => {
+        if (event.type === 'archive_step') {
+          // Mark previous step done, current step running
+          const steps = archiveModal.value.steps
+          const runIdx = steps.findIndex(s => s.state === 'run')
+          if (runIdx >= 0) steps[runIdx].state = 'done'
+          const next = steps.find(s => s.state === 'wait')
+          if (next) next.state = 'run'
+        } else if (event.type === 'archive_done') {
+          window.__onProgress = prevHandler
+          const steps = archiveModal.value.steps
+          if (event.ok) {
+            steps.forEach(s => { if (s.state !== 'done') s.state = 'done' })
+            archiveModal.value.done = true
+            archiveModal.value.error = false
+            await load()
+          } else {
+            const running = steps.find(s => s.state === 'run')
+            if (running) running.state = 'err'
+            archiveModal.value.logs = [event.error || 'Archive failed']
+            archiveModal.value.done = true
+            archiveModal.value.error = true
+          }
+        } else if (prevHandler) {
+          prevHandler(event)
+        }
+      }
+
+      // Start first step running
+      if (archiveModal.value.steps.length) archiveModal.value.steps[0].state = 'run'
+
+      try {
+        await window.__apiReady
+        const method = moveOnly ? 'archive_instance_move_only' : 'archive_instance'
+        const r = await window.pywebview.api[method](instance)
+        if (!r.ok && !r.started) {
+          window.__onProgress = prevHandler
+          archiveModal.value.logs = [r.error || 'Archive failed']
+          archiveModal.value.done = true
+          archiveModal.value.error = true
+        }
+      } catch(e) {
+        window.__onProgress = prevHandler
+        archiveModal.value.logs = [String(e)]
+        archiveModal.value.done = true
+        archiveModal.value.error = true
+      }
     }
 
     const showRestoreModal = ref(false)
@@ -233,7 +280,7 @@ export default {
     return {
       data, loading, error, query, filtered, icon, abbr, load, toggleDefault, toggleOverride,
       showSetup, setupForm, setupSaving, setupError, openSetup, saveSetup,
-      archiveQueue, archivingNow, archiveResults, archiveInstance,
+      archiveModal, openArchiveModal, closeArchiveModal, confirmArchive,
       showRestoreModal, archivedList, selectedArchive, restoring, restoreResult,
       openRestoreModal, doRestore, deleteZip, closeRestoreModal,
       showModuleSettings, moduleSettingsForm, moduleSettingsSaving, moduleSettingsError,
@@ -390,29 +437,9 @@ export default {
                     <span class="mono fs-12 text-2">{{ inst.synced_size_mb ? inst.synced_size_mb + ' MB' : '—' }}</span>
                   </td>
                   <td style="text-align:right">
-                    <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
-                      <!-- Inline archive result -->
-                      <span v-if="archiveResults[inst.name]"
-                        :style="archiveResults[inst.name].ok ? 'color:var(--ok)' : 'color:var(--err)'"
-                        class="fs-11">
-                        {{ archiveResults[inst.name].msg }}
-                        <button @click="delete archiveResults[inst.name]"
-                          style="background:none;border:none;cursor:pointer;color:inherit;margin-left:4px;opacity:.7">✕</button>
-                      </span>
-                      <!-- Queue position badge -->
-                      <span v-if="archiveQueue.includes(inst.name) && archivingNow !== inst.name"
-                        class="tag text-3 fs-11">
-                        #{{ archiveQueue.indexOf(inst.name) + 1 }} queued
-                      </span>
-                      <button class="btn btn-ghost btn-sm flex items-center gap-4"
-                        style="font-size:11px;color:var(--text-2)"
-                        :disabled="archiveQueue.includes(inst.name)"
-                        @click="archiveInstance(inst.name)"
-                        title="Sync, zip, and remove from Prism">
-                        <span :class="archivingNow === inst.name ? 'spin' : ''" v-html="icon('archive',12)"></span>
-                        {{ archivingNow === inst.name ? 'Archiving…' : 'Archive' }}
-                      </button>
-                    </div>
+                    <button class="icon-btn" title="Instance actions" @click.stop="openArchiveModal(inst.name, false)">
+                      <span v-html="icon('settings', 14)"></span>
+                    </button>
                   </td>
                 </tr>
                 <tr v-if="expandedError === inst.name && inst.last_errors?.length">
@@ -562,6 +589,56 @@ export default {
           </div>
         </div>
       </teleport>
+
+      <!-- Instance gear modal -->
+      <teleport to="body">
+        <div v-if="archiveModal.show && archiveModal.phase === 'summary'"
+          style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px"
+          @mousedown.self="closeArchiveModal">
+          <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:440px;overflow:hidden">
+            <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
+              <div>
+                <div class="kicker">Instance</div>
+                <div class="fw-600 text-0" style="font-size:15px">{{ archiveModal.instance }}</div>
+              </div>
+              <button class="icon-btn" @click="closeArchiveModal"><span v-html="icon('x',13)"></span></button>
+            </div>
+            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:0">
+              <div class="danger-zone">
+                <div class="danger-zone-label">Danger Zone</div>
+                <div style="margin-bottom:8px">
+                  <button class="btn-danger" @click="archiveModal.moveOnly = false; confirmArchive()">
+                    <span v-html="icon('archive',12)"></span> Archive
+                  </button>
+                  <div class="fs-11 text-3" style="margin-top:4px">Sync + create zip backup + remove from Prism</div>
+                </div>
+                <div>
+                  <button class="btn-danger" @click="archiveModal.moveOnly = true; confirmArchive()">
+                    <span v-html="icon('archive',12)"></span> Archive (Move only)
+                  </button>
+                  <div class="fs-11 text-3" style="margin-top:4px">Sync + remove from Prism — no zip backup</div>
+                </div>
+              </div>
+            </div>
+            <div style="padding:16px 24px;border-top:1px solid var(--line);display:flex;justify-content:flex-end">
+              <button class="btn btn-ghost btn-sm" @click="closeArchiveModal">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </teleport>
+
+      <!-- Archive progress modal -->
+      <action-modal
+        :show="archiveModal.show && archiveModal.phase === 'progress'"
+        :title="'Archiving ' + (archiveModal.instance || '')"
+        phase="progress"
+        :steps="archiveModal.steps"
+        :logs="archiveModal.logs"
+        :done="archiveModal.done"
+        :error="archiveModal.error"
+        @cancel="closeArchiveModal"
+        @retry="confirmArchive"
+      />
     </main>
   `
 }
