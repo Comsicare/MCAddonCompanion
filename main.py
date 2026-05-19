@@ -1299,6 +1299,7 @@ class Api:
                 client = GitLabClient(repo["base_url"], repo["project_id"],
                                       repo.get("upload_token"), repo.get("read_token"))
                 removed_mods = []
+                added_mods = []
                 prev_versions = client.list_packages(slug)
                 if prev_versions:
                     latest_ver = prev_versions[0].get("version", "")
@@ -1307,6 +1308,7 @@ class Api:
                         prev_mod_files = {m["file"] for m in prev_meta.get("mods", []) if isinstance(m, dict)}
                         new_mod_files = {m["file"] for m in mods}
                         removed_mods = sorted(prev_mod_files - new_mod_files)
+                        added_mods = sorted(new_mod_files - prev_mod_files)
 
                 zip_filename = f"{slug}-{version}.zip"
                 metadata = {
@@ -1320,6 +1322,7 @@ class Api:
                     "categories": [k for k, v in categories.items() if v],
                     "mods": mods,
                     "removed_mods": removed_mods,
+                    "added_mods": added_mods,
                 }
 
                 self._emit({"type": "step", "flow": "publish", "step": 0, "state": "running", "detail": ""})
@@ -2000,6 +2003,7 @@ def _headless_startup(name: str) -> None:
                         "repo_id": tracked["repo_id"],
                         "pack_slug": tracked["pack_slug"],
                         "removed_mods": meta.get("removed_mods", []),
+                        "added_mods": meta.get("added_mods", []),
                     }
                     api._update_choice = "skip"
 

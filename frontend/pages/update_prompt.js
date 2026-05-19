@@ -37,8 +37,11 @@ export default {
     onUnmounted(() => clearInterval(timer))
 
     const modDiff = computed(() => {
-      if (!data.value) return { removed: [] }
-      return { removed: data.value.removed_mods || [] }
+      if (!data.value) return { added: [], removed: [] }
+      return {
+        added: data.value.added_mods || [],
+        removed: data.value.removed_mods || [],
+      }
     })
 
     return { data, loading, countdown, icon, skip, update, modDiff }
@@ -76,14 +79,19 @@ export default {
           <div class="card-body fs-13 text-1" style="padding:12px 16px;white-space:pre-wrap">{{ data.changenotes }}</div>
         </div>
 
-        <div v-if="modDiff.removed && modDiff.removed.length" class="card" style="margin-bottom:16px">
+        <div v-if="(modDiff.added && modDiff.added.length) || (modDiff.removed && modDiff.removed.length)" class="card" style="margin-bottom:16px">
           <div class="card-header" style="padding:12px 16px">
-            <div class="kicker">Mod removals</div>
+            <div class="kicker">Mod changes</div>
           </div>
           <div class="card-body" style="padding:8px 16px">
-            <div v-for="jar in modDiff.removed" :key="jar" class="mono fs-12 text-err" style="padding:2px 0">
-              − {{ jar }}
-            </div>
+            <template v-if="modDiff.added && modDiff.added.length">
+              <div class="fs-11 text-3 fw-500" style="margin-bottom:4px;margin-top:4px">Added</div>
+              <div v-for="jar in modDiff.added" :key="'a'+jar" class="mono fs-12" style="padding:2px 0;color:var(--ok)">+ {{ jar }}</div>
+            </template>
+            <template v-if="modDiff.removed && modDiff.removed.length">
+              <div class="fs-11 text-3 fw-500" style="margin-bottom:4px;margin-top:8px">Removed</div>
+              <div v-for="jar in modDiff.removed" :key="'r'+jar" class="mono fs-12 text-err" style="padding:2px 0">- {{ jar }}</div>
+            </template>
           </div>
         </div>
 

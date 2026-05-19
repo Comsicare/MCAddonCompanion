@@ -49,9 +49,13 @@ export default {
       try {
         await window.__apiReady
         const next = !inst.hook_enabled
-        await window.pywebview.api.set_instance_hook(inst.instance_name, next)
-        inst.hook_enabled = next
-      } catch(e) {}
+        const result = await window.pywebview.api.set_instance_hook(inst.instance_name, next)
+        if (result && result.ok) {
+          inst.hook_enabled = next
+        } else {
+          console.error('set_instance_hook failed', result)
+        }
+      } catch(e) { console.error('toggleHook error', e) }
     }
 
     const removeInstalledRecord = async (instName) => {
