@@ -95,19 +95,37 @@ export default {
     const doArchive = async (instName, moveOnly) => {
       archiving.value = true
       archiveError.value = null
+      // Listen for archive_done progress event from background thread
+      const prevHandler = window.__onProgress
+      window.__onProgress = async (event) => {
+        if (event.type === 'archive_done') {
+          window.__onProgress = prevHandler
+          if (event.ok) {
+            closeSettings()
+            await load()
+          } else {
+            archiving.value = false
+            archiveConfirm.value = null
+            archiveError.value = event.error || 'Archive failed'
+          }
+        } else if (prevHandler) {
+          prevHandler(event)
+        }
+      }
       try {
         await window.__apiReady
         const method = moveOnly ? 'archive_instance_move_only' : 'archive_instance'
         const r = await window.pywebview.api[method](instName)
-        if (r.ok) {
-          closeSettings()
-          await load()
-        } else {
+        if (!r.ok && !r.started) {
+          // Immediate error (e.g. validation), restore handler
+          window.__onProgress = prevHandler
           archiveError.value = r.error || 'Archive failed'
+          archiving.value = false
+          archiveConfirm.value = null
         }
       } catch(e) {
+        window.__onProgress = prevHandler
         archiveError.value = String(e)
-      } finally {
         archiving.value = false
         archiveConfirm.value = null
       }

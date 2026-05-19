@@ -375,57 +375,52 @@ class Api:
         return {"ok": True}
 
     def archive_instance(self, instance_name: str) -> dict:
-        """Sync instance to sync folder, create a zip backup in the instances dir, then delete the instance folder."""
-        import shutil, zipfile
-        from datetime import datetime
-        from modules.instance_sync.sync import is_blacklisted, read_manifest, write_manifest, _file_stat
+        """Kick off archive (sync + zip + delete) in a background thread. Emits archive_done progress event."""
+        import threading
 
-        cfg = get_instance_sync_config()
-        instances_path = Path(cfg.get("instances_path") or str(INSTANCES_DIR))
-        sync_path = Path(cfg.get("sync_path") or "")
-        if not sync_path:
-            return {"ok": False, "error": "Sync path not configured."}
+        def _run():
+            import shutil, zipfile
+            from modules.instance_sync.sync import is_blacklisted, write_manifest, _file_stat
+            try:
+                cfg = get_instance_sync_config()
+                instances_path = Path(cfg.get("instances_path") or str(INSTANCES_DIR))
+                sync_path = Path(cfg.get("sync_path") or "")
+                if not sync_path:
+                    self._emit_archive_done(False, "Sync path not configured.")
+                    return
+                inst_dir = instances_path / instance_name
+                if not inst_dir.exists():
+                    self._emit_archive_done(False, f"Instance folder not found: {inst_dir}")
+                    return
+                mc_dir = get_minecraft_dir(instances_path, instance_name)
+                sync_dir = sync_path / "instance_sync" / instance_name
+                if mc_dir:
+                    all_files = [(src, src.relative_to(mc_dir).as_posix())
+                                 for src in mc_dir.rglob("*") if src.is_file()]
+                    to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
+                    sync_dir.mkdir(parents=True, exist_ok=True)
+                    new_manifest = {}
+                    for src, rel in to_copy:
+                        dest = sync_dir / rel
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(str(src), str(dest))
+                        new_manifest[rel] = _file_stat(dest)
+                    write_manifest(sync_dir, new_manifest)
+                zip_name = f"{instance_name}.archive.zip"
+                zip_path = instances_path / zip_name
+                with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for f in inst_dir.rglob("*"):
+                        if f.is_file():
+                            zf.write(f, f.relative_to(instances_path))
+                shutil.rmtree(str(inst_dir))
+                log.info("Archived instance %r → %s", instance_name, zip_path)
+                self._emit_archive_done(True, None)
+            except Exception as e:
+                log.error("archive_instance failed for %r: %s", instance_name, e)
+                self._emit_archive_done(False, str(e))
 
-        inst_dir = instances_path / instance_name
-        if not inst_dir.exists():
-            return {"ok": False, "error": f"Instance folder not found: {inst_dir}"}
-
-        mc_dir = get_minecraft_dir(instances_path, instance_name)
-
-        # 1. Sync to sync folder (same logic as exit sync)
-        sync_dir = sync_path / "instance_sync" / instance_name
-        if mc_dir:
-            all_files = [(src, src.relative_to(mc_dir).as_posix())
-                         for src in mc_dir.rglob("*") if src.is_file()]
-            to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
-            sync_dir.mkdir(parents=True, exist_ok=True)
-            new_manifest = {}
-            for src, rel in to_copy:
-                dest = sync_dir / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(src), str(dest))
-                new_manifest[rel] = _file_stat(dest)
-            write_manifest(sync_dir, new_manifest)
-
-        # 2. Create zip backup of entire instance folder inside instances dir
-        zip_name = f"{instance_name}.archive.zip"
-        zip_path = instances_path / zip_name
-        try:
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for f in inst_dir.rglob("*"):
-                    if f.is_file():
-                        zf.write(f, f.relative_to(instances_path))
-        except Exception as e:
-            return {"ok": False, "error": f"Zip creation failed: {e}"}
-
-        # 3. Remove instance folder
-        try:
-            shutil.rmtree(str(inst_dir))
-        except Exception as e:
-            return {"ok": False, "error": f"Could not remove instance folder: {e}"}
-
-        log.info("Archived instance %r → %s", instance_name, zip_path)
-        return {"ok": True, "zip_path": str(zip_path)}
+        threading.Thread(target=_run, daemon=True).start()
+        return {"ok": True, "started": True}
 
     def get_archived_instances(self) -> list:
         """Return list of archived instances (zip files in instances dir)."""
@@ -552,43 +547,55 @@ class Api:
         return result
 
     def archive_instance_move_only(self, instance_name: str) -> dict:
-        """Sync instance to sync folder then delete instance folder. No zip backup created."""
-        import shutil
-        from modules.instance_sync.sync import is_blacklisted, read_manifest, write_manifest, _file_stat
+        """Kick off move-only archive (sync + delete, no zip) in a background thread. Emits archive_done event."""
+        import threading
 
-        cfg = get_instance_sync_config()
-        instances_path = Path(cfg.get("instances_path") or str(INSTANCES_DIR))
-        sync_path = Path(cfg.get("sync_path") or "")
-        if not sync_path:
-            return {"ok": False, "error": "Sync path not configured."}
+        def _run():
+            import shutil
+            from modules.instance_sync.sync import is_blacklisted, write_manifest, _file_stat
+            try:
+                cfg = get_instance_sync_config()
+                instances_path = Path(cfg.get("instances_path") or str(INSTANCES_DIR))
+                sync_path = Path(cfg.get("sync_path") or "")
+                if not sync_path:
+                    self._emit_archive_done(False, "Sync path not configured.")
+                    return
+                inst_dir = instances_path / instance_name
+                if not inst_dir.exists():
+                    self._emit_archive_done(False, f"Instance folder not found: {inst_dir}")
+                    return
+                mc_dir = get_minecraft_dir(instances_path, instance_name)
+                sync_dir = sync_path / "instance_sync" / instance_name
+                if mc_dir:
+                    all_files = [(src, src.relative_to(mc_dir).as_posix())
+                                 for src in mc_dir.rglob("*") if src.is_file()]
+                    to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
+                    sync_dir.mkdir(parents=True, exist_ok=True)
+                    new_manifest = {}
+                    for src, rel in to_copy:
+                        dest = sync_dir / rel
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(str(src), str(dest))
+                        new_manifest[rel] = _file_stat(dest)
+                    write_manifest(sync_dir, new_manifest)
+                shutil.rmtree(str(inst_dir))
+                log.info("Move-only archived instance %r (no zip)", instance_name)
+                self._emit_archive_done(True, None)
+            except Exception as e:
+                log.error("archive_instance_move_only failed for %r: %s", instance_name, e)
+                self._emit_archive_done(False, str(e))
 
-        inst_dir = instances_path / instance_name
-        if not inst_dir.exists():
-            return {"ok": False, "error": f"Instance folder not found: {inst_dir}"}
+        threading.Thread(target=_run, daemon=True).start()
+        return {"ok": True, "started": True}
 
-        mc_dir = get_minecraft_dir(instances_path, instance_name)
-
-        sync_dir = sync_path / "instance_sync" / instance_name
-        if mc_dir:
-            all_files = [(src, src.relative_to(mc_dir).as_posix())
-                         for src in mc_dir.rglob("*") if src.is_file()]
-            to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
-            sync_dir.mkdir(parents=True, exist_ok=True)
-            new_manifest = {}
-            for src, rel in to_copy:
-                dest = sync_dir / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(src), str(dest))
-                new_manifest[rel] = _file_stat(dest)
-            write_manifest(sync_dir, new_manifest)
-
-        try:
-            shutil.rmtree(str(inst_dir))
-        except Exception as e:
-            return {"ok": False, "error": f"Could not remove instance folder: {e}"}
-
-        log.info("Move-only archived instance %r (no zip)", instance_name)
-        return {"ok": True}
+    def _emit_archive_done(self, ok: bool, error: str | None) -> None:
+        """Emit archive_done progress event to the JS frontend."""
+        import webview
+        payload = {"type": "archive_done", "ok": ok}
+        if error:
+            payload["error"] = error
+        for win in webview.windows:
+            win.evaluate_js(f"window.__onProgress && window.__onProgress({__import__('json').dumps(payload)})")
 
     def get_update_stream_api(self) -> str:
         from core.state import get_update_stream
