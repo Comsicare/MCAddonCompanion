@@ -628,13 +628,17 @@ class Api:
     def open_instances_folder(self) -> None:
         from core.config import INSTANCES_DIR
         import subprocess
-        if sys.platform == "win32":
-            subprocess.Popen(["explorer", str(INSTANCES_DIR)])
-        else:
-            subprocess.Popen(["xdg-open", str(INSTANCES_DIR)])
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", str(INSTANCES_DIR)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(INSTANCES_DIR)])
+            else:
+                subprocess.Popen(["xdg-open", str(INSTANCES_DIR)])
+        except Exception as e:
+            log.error("open_instances_folder failed: %s", e)
 
     def reset_module(self, module: str) -> dict:
-        from core.state import load_state, save_state
         valid = {"schematic_sync", "instance_sync", "pack_registry"}
         if module not in valid:
             return {"ok": False, "error": f"Unknown module: {module}"}
@@ -651,22 +655,30 @@ class Api:
     def get_instance_settings(self, instance_name: str) -> dict:
         from core.state import load_state
         state = load_state()
+
+        # Instance sync toggles (dict keyed by name)
         is_cfg = state.get("instance_sync", {})
-        instances = is_cfg.get("instances", {})
-        inst = instances.get(instance_name, {})
-        sc_cfg = state.get("schematic_sync", {})
-        sc_instances = sc_cfg.get("instances", {})
-        sc_inst = sc_instances.get(instance_name, {})
-        tracked = state.get("tracked_packs", {})
-        installed = state.get("installed_instances", {})
-        inst_installed = installed.get(instance_name)
+        inst = is_cfg.get("instances", {}).get(instance_name, {})
+
+        # Schematic sync (list of name strings)
+        sc_autosync = state.get("schematic_sync", {}).get("autosync_instances", [])
+        schematic_sync = instance_name in sc_autosync
+
+        # Tracked packs (list of dicts)
+        tracked_packs = state.get("tracked_packs", [])
+        tracked = any(t.get("instance_name") == instance_name for t in tracked_packs)
+
+        # Installed instances (list of dicts)
+        installed_instances = state.get("installed_instances", [])
+        inst_installed = next((i for i in installed_instances if i.get("instance_name") == instance_name), None)
         pack_name = inst_installed.get("pack_name") if inst_installed else None
+
         return {
-            "schematic_sync": bool(sc_inst.get("enabled", False)),
+            "schematic_sync": schematic_sync,
             "exit_sync": bool(inst.get("exit_sync", False)),
             "startup_sync": bool(inst.get("startup_sync", False)),
             "hook_enabled": bool(inst.get("hook_enabled", False)),
-            "tracked": instance_name in tracked,
+            "tracked": tracked,
             "installed": inst_installed is not None,
             "pack_name": pack_name,
         }
@@ -678,13 +690,17 @@ class Api:
         try:
             state = load_state()
 
-            # Schematic sync
+            # Schematic sync — list of name strings
             sc_cfg = state.setdefault("schematic_sync", {})
-            sc_instances = sc_cfg.setdefault("instances", {})
-            sc_inst = sc_instances.setdefault(instance_name, {})
-            sc_inst["enabled"] = bool(settings.get("schematic_sync", False))
+            sc_autosync = sc_cfg.setdefault("autosync_instances", [])
+            if settings.get("schematic_sync"):
+                if instance_name not in sc_autosync:
+                    sc_autosync.append(instance_name)
+            else:
+                if instance_name in sc_autosync:
+                    sc_autosync.remove(instance_name)
 
-            # Instance sync toggles
+            # Instance sync toggles (dict keyed by name)
             is_cfg = state.setdefault("instance_sync", {})
             instances = is_cfg.setdefault("instances", {})
             inst = instances.setdefault(instance_name, {})
@@ -700,15 +716,17 @@ class Api:
             else:
                 clear_exit_commands([instance_name], INSTANCES_DIR)
 
-            # Track for updates
-            tracked = state.setdefault("tracked_packs", {})
+            # Track for updates — list of dicts
+            tracked_packs = state.setdefault("tracked_packs", [])
+            installed_instances = state.get("installed_instances", [])
+            already_tracked = next((i for i, t in enumerate(tracked_packs) if t.get("instance_name") == instance_name), None)
             if settings.get("tracked"):
-                installed = state.get("installed_instances", {})
-                inst_info = installed.get(instance_name, {})
-                if inst_info:
-                    tracked[instance_name] = inst_info
+                inst_info = next((i for i in installed_instances if i.get("instance_name") == instance_name), None)
+                if inst_info and already_tracked is None:
+                    tracked_packs.append(inst_info)
             else:
-                tracked.pop(instance_name, None)
+                if already_tracked is not None:
+                    tracked_packs.pop(already_tracked)
 
             save_state(state)
             log.info("save_instance_settings: saved settings for %s", instance_name)
