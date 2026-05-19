@@ -13,26 +13,41 @@ def _configure_logging() -> None:
     if root.handlers:
         return
     if sys.platform == "win32":
-        log_dir = pathlib.Path(os.environ.get("APPDATA", ".")) / "MCAddonCompanion"
+        log_dir = pathlib.Path(os.environ.get("LOCALAPPDATA", os.environ.get("APPDATA", "."))) / "MCAddonCompanion" / "logs"
     else:
         xdg = os.environ.get("XDG_DATA_HOME", str(pathlib.Path.home() / ".local/share"))
-        log_dir = pathlib.Path(xdg) / "MCAddonCompanion"
+        log_dir = pathlib.Path(xdg) / "MCAddonCompanion" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "mcaddoncompanion.log"
-    fh = logging.handlers.RotatingFileHandler(
-        log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"
-    )
-    fh.setFormatter(logging.Formatter(
+
+    fmt = logging.Formatter(
         "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
-    ))
+    )
+
+    fh = logging.handlers.RotatingFileHandler(
+        log_dir / "mcaddoncompanion.log",
+        maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    fh.setFormatter(fmt)
     root.setLevel(logging.DEBUG)
     root.addHandler(fh)
+
+    # JS errors go to a separate file so they don't pollute the main log
+    js_fh = logging.handlers.RotatingFileHandler(
+        log_dir / "js_errors.log",
+        maxBytes=2 * 1024 * 1024, backupCount=2, encoding="utf-8"
+    )
+    js_fh.setFormatter(fmt)
+    js_log = logging.getLogger("js")
+    js_log.addHandler(js_fh)
+    js_log.propagate = False  # don't echo JS noise into main log
+
     if not getattr(sys, "frozen", False):
         root.addHandler(logging.StreamHandler())
 
 
 _configure_logging()
+log = logging.getLogger(__name__)
 
 if not getattr(sys, "frozen", False):
     _VENV = Path(__file__).parent / "venv"
@@ -72,8 +87,6 @@ from core.state import (
     get_repo_by_id,
     get_installed_instances, save_installed_instance,
 )
-
-log = logging.getLogger(__name__)
 
 import re as _re
 
