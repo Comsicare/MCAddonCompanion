@@ -1145,6 +1145,8 @@ class Api:
             raise ValueError(f"GitLab API error {e.code}: {e.reason}")
 
         project_id = str(data["id"])
+        if repo.get("_test_only"):
+            return {"id": None, "project_id": project_id}
         repos = get_pack_registry_repos()
         rid = repo.get("id") or make_repo_id()
         repo_obj = {
