@@ -111,7 +111,9 @@ export default {
 
       const prevHandler = window.__onProgress
       window.__onProgress = async (event) => {
-        if (event.type === 'archive_progress') {
+        if (event.type === 'archive_log') {
+          archiveModal.value.logs = [...archiveModal.value.logs, event.line]
+        } else if (event.type === 'archive_progress') {
           const running = archiveModal.value.steps.find(s => s.state === 'run')
           if (running) running.pct = event.pct
         } else if (event.type === 'archive_step') {
@@ -125,10 +127,9 @@ export default {
           const steps = archiveModal.value.steps
           if (event.ok) {
             steps.forEach(s => { if (s.state !== 'done') s.state = 'done' })
-            if (event.logs) archiveModal.value.logs = event.logs
             archiveModal.value.done = true
             archiveModal.value.error = false
-            load()  // refresh in background — don't await, user dismisses modal manually
+            load()
           } else {
             const running = steps.find(s => s.state === 'run')
             if (running) running.state = 'err'
