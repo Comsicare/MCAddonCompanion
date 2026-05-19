@@ -154,8 +154,10 @@ export default {
       steps: [], logs: [],
     })
     const archiveModal = ref(_makeArchiveModal())
+    const archiveConfirm = ref(null) // 'archive' | 'move_only' | null
 
     const openArchiveModal = (instName, moveOnly) => {
+      archiveConfirm.value = null
       archiveModal.value = {
         show: true, instance: instName, moveOnly,
         phase: 'summary', done: false, error: false,
@@ -283,7 +285,7 @@ export default {
     return {
       data, loading, error, query, filtered, icon, abbr, load, toggleDefault, toggleOverride,
       showSetup, setupForm, setupSaving, setupError, openSetup, saveSetup,
-      archiveModal, openArchiveModal, closeArchiveModal, confirmArchive,
+      archiveModal, archiveConfirm, openArchiveModal, closeArchiveModal, confirmArchive,
       showRestoreModal, archivedList, selectedArchive, restoring, restoreResult,
       openRestoreModal, doRestore, deleteZip, closeRestoreModal,
       showModuleSettings, moduleSettingsForm, moduleSettingsSaving, moduleSettingsError,
@@ -602,18 +604,41 @@ export default {
             <div style="padding:20px 24px;display:flex;flex-direction:column;gap:0">
               <div class="danger-zone">
                 <div class="danger-zone-label">Danger Zone</div>
+
+                <!-- Archive (with zip) -->
                 <div style="margin-bottom:8px">
-                  <button class="btn-danger" @click="archiveModal.moveOnly = false; confirmArchive()">
-                    <span v-html="icon('archive',12)"></span> Archive
-                  </button>
-                  <div class="fs-11 text-3" style="margin-top:4px">Sync + create zip backup + remove from Prism</div>
+                  <template v-if="archiveConfirm === 'archive'">
+                    <div class="fs-12 text-1" style="margin-bottom:6px">This will sync, zip, and remove the instance from Prism. Continue?</div>
+                    <div class="flex items-center gap-6">
+                      <button class="btn-danger" @click="archiveModal.moveOnly = false; confirmArchive()">Confirm Archive</button>
+                      <button class="btn btn-ghost btn-sm" @click="archiveConfirm = null">Cancel</button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <button class="btn-danger" @click="archiveConfirm = 'archive'">
+                      <span v-html="icon('archive',12)"></span> Archive
+                    </button>
+                    <div class="fs-11 text-3" style="margin-top:4px">Sync + create zip backup + remove from Prism</div>
+                  </template>
                 </div>
+
+                <!-- Archive Move Only -->
                 <div>
-                  <button class="btn-danger" @click="archiveModal.moveOnly = true; confirmArchive()">
-                    <span v-html="icon('archive',12)"></span> Archive (Move only)
-                  </button>
-                  <div class="fs-11 text-3" style="margin-top:4px">Sync + remove from Prism — no zip backup</div>
+                  <template v-if="archiveConfirm === 'move_only'">
+                    <div class="fs-12" style="color:var(--err);margin-bottom:6px">⚠ Warning: No zip backup — cannot recover if sync folder is lost.</div>
+                    <div class="flex items-center gap-6">
+                      <button class="btn-danger" @click="archiveModal.moveOnly = true; confirmArchive()">Yes, move only</button>
+                      <button class="btn btn-ghost btn-sm" @click="archiveConfirm = null">Cancel</button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <button class="btn-danger" @click="archiveConfirm = 'move_only'">
+                      <span v-html="icon('archive',12)"></span> Archive (Move only)
+                    </button>
+                    <div class="fs-11 text-3" style="margin-top:4px">Sync + remove from Prism — no zip backup</div>
+                  </template>
                 </div>
+
               </div>
             </div>
             <div style="padding:16px 24px;border-top:1px solid var(--line);display:flex;justify-content:flex-end">

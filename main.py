@@ -445,11 +445,15 @@ class Api:
                 elapsed = time.monotonic() - t0
                 mins, secs = divmod(int(elapsed), 60)
                 summary = [
-                    f"Files synced:  {files_copied}",
-                    f"Synced size:   {round(synced_bytes / 1024 / 1024, 1)} MB",
-                    f"Zip size:      {zip_size_mb} MB",
-                    f"Elapsed:       {mins:02d}:{secs:02d}",
-                    f"Destination:   {sync_dir}",
+                    f"Reading files",
+                    f"Copying files       {files_copied} files  ({round(synced_bytes / 1024 / 1024, 1)} MB)",
+                    f"Creating zip archive  {zip_size_mb} MB",
+                    f"Removing instance folder",
+                    f"",
+                    f"Elapsed:     {mins:02d}:{secs:02d}",
+                    f"Synced size: {round(synced_bytes / 1024 / 1024, 1)} MB",
+                    f"Zip size:    {zip_size_mb} MB",
+                    f"Destination: {sync_dir}",
                 ]
                 log.info("Archived instance %r → %s", instance_name, zip_path)
                 self._emit_archive_done(True, None, summary)
@@ -639,10 +643,13 @@ class Api:
                 elapsed = time.monotonic() - t0
                 mins, secs = divmod(int(elapsed), 60)
                 summary = [
-                    f"Files synced:  {files_copied}",
-                    f"Synced size:   {round(synced_bytes / 1024 / 1024, 1)} MB",
-                    f"Elapsed:       {mins:02d}:{secs:02d}",
-                    f"Destination:   {sync_dir}",
+                    f"Reading files",
+                    f"Moving files        {files_copied} files  ({round(synced_bytes / 1024 / 1024, 1)} MB)",
+                    f"Removing instance folder",
+                    f"",
+                    f"Elapsed:     {mins:02d}:{secs:02d}",
+                    f"Synced size: {round(synced_bytes / 1024 / 1024, 1)} MB",
+                    f"Destination: {sync_dir}",
                 ]
                 log.info("Move-only archived instance %r (no zip)", instance_name)
                 self._emit_archive_done(True, None, summary)
