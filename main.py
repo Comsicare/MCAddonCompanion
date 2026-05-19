@@ -1750,7 +1750,8 @@ class Api:
         self._update_choice = choice
         win = self._win[0] if self._win else None
         if win:
-            win.destroy()
+            import threading
+            threading.Timer(0.1, win.destroy).start()
 
     def get_deletion_data(self) -> dict:
         return self._deletion_data
@@ -1759,7 +1760,8 @@ class Api:
         self._deletion_choice = choice
         win = self._win[0] if self._win else None
         if win:
-            win.destroy()
+            import threading
+            threading.Timer(0.1, win.destroy).start()
 
     def pick_folder(self) -> str | None:
         import webview as _webview
