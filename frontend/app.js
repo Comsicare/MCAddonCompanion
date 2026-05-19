@@ -53,7 +53,7 @@ window.addEventListener('pywebviewready', () => {
       return (...args) => {
         const argStr = JSON.stringify(args).slice(0, 300)
         _raw.__raw_log('debug', `api.call method=${method} args=${argStr}`).catch(() => {})
-        return fn.apply(target, args).then(result => {
+        return Promise.resolve(fn.apply(target, args)).then(result => {
           _raw.__raw_log('debug', `api.result method=${method}`).catch(() => {})
           return result
         }).catch(err => {
