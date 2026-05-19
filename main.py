@@ -2184,9 +2184,9 @@ def _headless_startup(name: str) -> None:
                             f"Updating {tracked['pack_name']}…",
                             url=str(frontend_dir / "index.html") + "?mode=pack_update_progress",
                             js_api=prog_api,
-                            width=520,
-                            height=340,
-                            resizable=False,
+                            width=560,
+                            height=420,
+                            resizable=True,
                         )
                         prog_win_ref[0] = prog_window
                         prog_window.events.loaded += _on_prog_loaded

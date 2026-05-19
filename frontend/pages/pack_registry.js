@@ -209,6 +209,7 @@ export default {
     const publishRemovedMods = ref([])  // mods that will be in removed_mods on publish
     const existingPacks = ref([])
     const packNameIsNew = ref(false)
+    const latestPackVersion = ref(null)
 
     const loadExistingPacks = async () => {
       const repoId = publishForm.value.repo_id
@@ -262,6 +263,7 @@ export default {
         if (packName && repoId && !packNameIsNew.value) {
           try {
             const prevMeta = await window.pywebview.api.get_latest_pack_metadata(repoId, packName)
+            latestPackVersion.value = prevMeta && prevMeta.version ? prevMeta.version : null
             if (prevMeta && prevMeta.mods) {
               const sideMap = {}
               const excludedSet = new Set()
@@ -770,7 +772,7 @@ export default {
       loadRepos, selectRepo, newRepo, saveRepo, deleteRepo, testConnection,
       // publish
       allInstances, publishForm, modFiles, loadModFiles,
-      existingPacks, packNameIsNew,
+      existingPacks, packNameIsNew, latestPackVersion,
       // browse
       browseRepoId, packs, packsLoading, selectedPack,
       packVersions, versionsLoading, selectedVersionObj,
@@ -923,7 +925,7 @@ export default {
                   <div class="fs-12 text-2 fw-500" style="margin-bottom:6px;display:flex;align-items:center;justify-content:space-between">
                     Pack Name
                     <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px"
-                      @click="packNameIsNew = !packNameIsNew; publishForm.pack_name = ''">
+                      @click="packNameIsNew = !packNameIsNew; publishForm.pack_name = ''; latestPackVersion = null">
                       {{ packNameIsNew ? '← Existing' : '+ New' }}
                     </button>
                   </div>
@@ -934,7 +936,10 @@ export default {
                   </select>
                 </div>
                 <div>
-                  <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Version</div>
+                  <div class="fs-12 text-2 fw-500" style="margin-bottom:6px;display:flex;align-items:center;justify-content:space-between">
+                    Version
+                    <span v-if="latestPackVersion" class="fs-11 text-3">Current latest: <span class="mono">{{ latestPackVersion }}</span></span>
+                  </div>
                   <input v-model="publishForm.version" placeholder="e.g. 1.0.0" class="input input-mono">
                 </div>
               </div>
