@@ -1,6 +1,8 @@
 # MCAddonCompanion
 
-A desktop companion app for [Prism Launcher](https://prismlauncher.org/) that handles schematic syncing, instance backups, and a self-hosted mod pack registry — all through a clean dark UI built on PyWebView + Vue 3.
+A desktop companion app for Minecraft that handles schematic syncing, instance backups, and a self-hosted mod pack registry — all through a clean dark UI.
+
+Currently supports **Prism Launcher**. Multi-launcher support (MultiMC, Modrinth App, CurseForge, Official Launcher) is planned for v0.6.0.
 
 ---
 
@@ -38,15 +40,15 @@ Enable autosync per instance in the **Schematic Sync** tab. On game exit, any `.
 Keeps your Prism instance folders in sync across multiple PCs via a shared folder (Nextcloud, etc.).
 
 **Setup:**
-1. Go to **Instance Sync** → click **Setup Instance Sync**
-2. Enter your Prism instances path (e.g. `C:\Users\...\PrismLauncher\instances`)
-3. Enter a sync folder path (e.g. `C:\Users\...\Nextcloud\Minecraft`)
-4. Click **Save & Enable** — hooks are written to instance.cfg automatically
+1. Go to **Instance Sync** → click the gear icon next to the page title
+2. Enter your Prism instances path and a sync folder path
+3. Click **Save** — hooks are written to `instance.cfg` automatically
 
 **Per-instance controls:**
-- Toggle **Exit Sync** / **Startup Sync** per instance or set global defaults
-- **Archive** — syncs the instance, creates a zip backup, then removes it from Prism so it disappears from the launcher
-- **Archived** button — restore any archived instance back into Prism; prompts to delete the backup zip after
+- Toggle **Exit Sync** / **Startup Sync** per instance from the home page gear icon or the Instance Sync page
+- **Archive** — syncs the instance, creates a zip backup, then removes it from Prism
+- **Archive (Move only)** — syncs and removes without creating a zip (no restore available)
+- Archived instances can be restored from the Instance Sync page
 
 ---
 
@@ -92,52 +94,37 @@ You need a GitLab project with the **Generic Package Registry** enabled (availab
 
 1. Go to **Pack Registry → Publish**
 2. Select the **Repo** and the **Instance** to export from
-3. **Pack Name** — select an existing pack from the dropdown to publish a new version, or click **+ New** to create a new pack
-4. Enter a **Version** string (e.g. `1.0.0` or `2024-05-18`) — this is free text, no format enforced
+3. **Pack Name** — select an existing pack to publish a new version, or click **+ New** to create a new pack
+4. Enter a **Version** string (e.g. `1.0.0`) — free text, no format enforced
 5. Fill in **Description** and **Changenotes**
 6. Check the **Include** boxes for what to bundle (mods, config, resourcepacks, etc.)
-7. In the **Mod Side Tags** table, set each mod as `required`, `client`, or `server`. Check **Exclude** to omit a mod from the pack entirely
+7. In the **Mod Side Tags** table, set each mod as `required`, `client`, or `server`. Check **Exclude** to omit a mod entirely
    - Tags are pre-filled from the previous version automatically when updating an existing pack
-8. Verify **Loader Version** is filled (shown with a red `!` if missing — an empty loader version causes a red X in Prism)
-9. Click **Publish pack** — progress is shown in the panel on the right
-
-The pack is uploaded as a GitLab Generic Package. Each named pack is one package; each version is a separate package version containing a zip and a `metadata.json` sidecar.
+8. Verify **Loader Version** is filled (shown with a red `!` if missing)
+9. Click **Publish pack**
 
 ---
 
 #### Installing a pack
 
 1. Go to **Pack Registry → Browse**
-2. Select a repo from the top bar, then select a pack from the left list
-3. Choose a version from the dropdown — changenotes and mod diff (added/removed) are shown
+2. Select a repo, then select a pack from the left list
+3. Choose a version — changenotes and mod diff (added/removed) are shown
 4. Choose **Create new instance** or **Install to existing**
-5. Optionally check **Track for updates** — tracked instances get an auto-update prompt on next game launch
-6. Click **Install**
-   - If installing to an existing instance and file conflicts are detected, a conflict dialog appears grouped by folder. Mark files to keep (skip overwrite) per file or per group. Identical files are skipped automatically.
+5. Optionally check **Track for updates**
+6. Click **Install** — conflict resolution dialog appears if needed
 
 ---
 
 #### Managing installed packs
 
-Go to **Pack Registry → Instances** to see all instances ever installed from the registry.
-
-| Column | Description |
-|---|---|
-| Instance | Prism instance name |
-| Pack | Pack name |
-| Version | Installed version |
-| Repo | Source repository |
-| Tracked | Whether the instance tracks updates |
-| Auto Update | Toggle to enable/disable the startup update prompt hook |
-| Actions | Update button (when newer version available), Untrack, or Reinstall/Remove if instance is missing from Prism |
-
-**Auto Update** — when enabled, the `--startup` hook is written to the instance's `instance.cfg`. On next game launch, if a newer version of the pack is available, a prompt appears with changenotes and a 20-second countdown to auto-skip.
+Go to **Pack Registry → Instances** to see all instances installed from the registry. Update, reinstall, or untrack from here. Tracked instances with **Auto Update** enabled get an update prompt on game launch via the startup hook.
 
 ---
 
 ## Update Streams
 
-The app updates itself automatically. The update stream controls which releases you receive:
+The app updates itself automatically. To change which releases you receive, open the **three-dot menu → Version & Updates** and select a stream:
 
 | Stream | Receives |
 |---|---|
@@ -146,7 +133,28 @@ The app updates itself automatically. The update stream controls which releases 
 | `prerelease` | Release candidates + stable |
 | `release` | Stable releases only |
 
-To change stream, set `"update_stream"` in `%APPDATA%\MCAddonCompanion\state.json`.
+---
+
+## Diagnostics
+
+Go to **three-dot menu → Help & Debug** to:
+- View host info (version, paths, platform)
+- Reset individual modules
+- Save a **debug dump** — a zip containing app logs and a redacted copy of your settings, useful for bug reports
+
+---
+
+## Roadmap
+
+| Version | Goal |
+|---|---|
+| **v0.3.0-alpha** | Logging, archive modal, full UI wiring ✅ |
+| **v0.4.0-alpha** | Polish existing modules — archive pre-flight, instance sync conflict detection, small fixes |
+| **v0.5.0-alpha** | Stability, efficiency, and performance — file operation optimization, code audit |
+| **v0.6.0-alpha** | Multi-launcher support — Prism, MultiMC, Modrinth App, CurseForge, Official Launcher |
+| **v0.7.0-alpha** | Code audit, bugfixing, diagnostic upload for easier support |
+| **v1.0.0-pre** | User testing and feedback |
+| **v1.0.0** | Stable release |
 
 ---
 
