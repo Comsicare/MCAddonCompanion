@@ -1988,8 +1988,15 @@ def _headless_startup(name: str) -> None:
         log.error("Instance %r not found", name)
         sys.exit(1)
 
-    # Check if this instance has a tracked pack with an update available
+    # Check if this instance has a tracked pack with an update available.
+    # Fall back to installed_instances if tracked_packs is missing the entry — keeps them in sync.
     tracked = next((t for t in get_tracked_packs() if t["instance_name"] == name), None)
+    if not tracked:
+        installed_entry = next((i for i in get_installed_instances() if i["instance_name"] == name), None)
+        if installed_entry:
+            log.info("Instance %r in installed_instances but not tracked_packs — re-adding", name)
+            add_tracked_pack(installed_entry)
+            tracked = installed_entry
     if tracked:
         repo = get_repo_by_id(tracked["repo_id"])
         if repo:
