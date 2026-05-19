@@ -411,21 +411,24 @@ class Api:
                     all_files = [(src, src.relative_to(mc_dir).as_posix())
                                  for src in mc_dir.rglob("*") if src.is_file()]
                     to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
-                    # Each archive_step carries the completed log for the PREVIOUS step atomically
                     log.debug("[archive] emitting %s prev_log=%r", "archive_step", None)
                     self._emit_archive_event({"type": "archive_step", "step": "Reading files…", "pct": 0})
                     log.debug("[archive] emitted %s", "archive_step")
                     t_read = time.monotonic()
                     total_bytes = sum(s.stat().st_size for s, _ in to_copy) or 1
                     log_read = f"Reading files...  {len(to_copy)} files  ({round(total_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_read)}]"
-                    log.debug("[archive] emitting %s prev_log=%r", "archive_step", log_read)
-                    self._emit_archive_event({"type": "archive_step", "step": "Copying files…", "pct": 0, "prev_log": log_read})
+                    log.debug("[archive] emitting archive_log")
+                    self._emit_archive_event({"type": "archive_log", "line": log_read})
+                    time.sleep(0.15)
+                    log.debug("[archive] emitting %s prev_log=%r", "archive_step", None)
+                    self._emit_archive_event({"type": "archive_step", "step": "Copying files…", "pct": 0})
                     log.debug("[archive] emitted %s", "archive_step")
                     t_copy = time.monotonic()
                     sync_dir.mkdir(parents=True, exist_ok=True)
                     new_manifest = {}
                     copied_bytes = 0
                     last_pct = 0
+                    last_emit_t = 0.0
                     for src, rel in to_copy:
                         dest = sync_dir / rel
                         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -437,39 +440,51 @@ class Api:
                         copied_bytes += fsize
                         files_copied += 1
                         pct = min(99, int(copied_bytes / total_bytes * 100))
-                        if pct >= last_pct + 1 or pct == 99:
+                        now = time.monotonic()
+                        if pct != last_pct and (now - last_emit_t) >= 0.5:
                             log.debug("[archive] emitting %s prev_log=%r", "archive_progress", None)
                             self._emit_archive_event({"type": "archive_progress", "pct": pct})
                             log.debug("[archive] emitted %s", "archive_progress")
                             last_pct = pct
+                            last_emit_t = now
                     write_manifest(sync_dir, new_manifest)
                     log_copy = f"Copying files...  {files_copied} files  ({round(synced_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_copy)}]"
                 else:
                     log_copy = None
                 zip_name = f"{instance_name}.archive.zip"
                 zip_path = instances_path / zip_name
-                log.debug("[archive] emitting %s prev_log=%r", "archive_step", log_copy)
-                self._emit_archive_event({"type": "archive_step", "step": "Creating zip archive…", "pct": 0, "prev_log": log_copy})
+                if log_copy:
+                    log.debug("[archive] emitting archive_log")
+                    self._emit_archive_event({"type": "archive_log", "line": log_copy})
+                    time.sleep(0.15)
+                log.debug("[archive] emitting %s prev_log=%r", "archive_step", None)
+                self._emit_archive_event({"type": "archive_step", "step": "Creating zip archive…", "pct": 0})
                 log.debug("[archive] emitted %s", "archive_step")
                 t_zip = time.monotonic()
                 zip_files = [f for f in inst_dir.rglob("*") if f.is_file()]
                 total_zip_bytes = sum(f.stat().st_size for f in zip_files) or 1
                 zipped_bytes = 0
                 last_pct = 0
+                last_emit_t = 0.0
                 with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
                     for f in zip_files:
                         zf.write(f, f.relative_to(instances_path))
                         zipped_bytes += f.stat().st_size
                         pct = min(99, int(zipped_bytes / total_zip_bytes * 100))
-                        if pct >= last_pct + 1 or pct == 99:
+                        now = time.monotonic()
+                        if pct != last_pct and (now - last_emit_t) >= 0.5:
                             log.debug("[archive] emitting %s prev_log=%r", "archive_progress", None)
                             self._emit_archive_event({"type": "archive_progress", "pct": pct})
                             log.debug("[archive] emitted %s", "archive_progress")
                             last_pct = pct
+                            last_emit_t = now
                 zip_size_mb = round(zip_path.stat().st_size / 1024 / 1024, 1) if zip_path.exists() else 0
                 log_zip = f"Creating zip archive...  {zip_size_mb} MB  [{_secs(t_zip)}]"
-                log.debug("[archive] emitting %s prev_log=%r", "archive_step", log_zip)
-                self._emit_archive_event({"type": "archive_step", "step": "Removing instance folder…", "prev_log": log_zip})
+                log.debug("[archive] emitting archive_log")
+                self._emit_archive_event({"type": "archive_log", "line": log_zip})
+                time.sleep(0.15)
+                log.debug("[archive] emitting %s prev_log=%r", "archive_step", None)
+                self._emit_archive_event({"type": "archive_step", "step": "Removing instance folder…"})
                 log.debug("[archive] emitted %s", "archive_step")
                 t_rm = time.monotonic()
                 shutil.rmtree(str(inst_dir))
@@ -660,14 +675,18 @@ class Api:
                     t_read = time.monotonic()
                     total_bytes = sum(s.stat().st_size for s, _ in to_copy) or 1
                     log_read = f"Reading files...  {len(to_copy)} files  ({round(total_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_read)}]"
-                    log.debug("[archive] emitting %s prev_log=%r", "archive_step", log_read)
-                    self._emit_archive_event({"type": "archive_step", "step": "Moving files…", "pct": 0, "prev_log": log_read})
+                    log.debug("[archive] emitting archive_log")
+                    self._emit_archive_event({"type": "archive_log", "line": log_read})
+                    time.sleep(0.15)
+                    log.debug("[archive] emitting %s prev_log=%r", "archive_step", None)
+                    self._emit_archive_event({"type": "archive_step", "step": "Moving files…", "pct": 0})
                     log.debug("[archive] emitted %s", "archive_step")
                     t_move = time.monotonic()
                     sync_dir.mkdir(parents=True, exist_ok=True)
                     new_manifest = {}
                     copied_bytes = 0
                     last_pct = 0
+                    last_emit_t = 0.0
                     for src, rel in to_copy:
                         dest = sync_dir / rel
                         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -679,17 +698,23 @@ class Api:
                         copied_bytes += fsize
                         files_copied += 1
                         pct = min(99, int(copied_bytes / total_bytes * 100))
-                        if pct >= last_pct + 1 or pct == 99:
+                        now = time.monotonic()
+                        if pct != last_pct and (now - last_emit_t) >= 0.5:
                             log.debug("[archive] emitting %s prev_log=%r", "archive_progress", None)
                             self._emit_archive_event({"type": "archive_progress", "pct": pct})
                             log.debug("[archive] emitted %s", "archive_progress")
                             last_pct = pct
+                            last_emit_t = now
                     write_manifest(sync_dir, new_manifest)
                     log_move = f"Moving files...  {files_copied} files  ({round(synced_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_move)}]"
                 else:
                     log_move = None
-                log.debug("[archive] emitting %s prev_log=%r", "archive_step", log_move)
-                self._emit_archive_event({"type": "archive_step", "step": "Removing instance folder…", "prev_log": log_move})
+                if log_move:
+                    log.debug("[archive] emitting archive_log")
+                    self._emit_archive_event({"type": "archive_log", "line": log_move})
+                    time.sleep(0.15)
+                log.debug("[archive] emitting %s prev_log=%r", "archive_step", None)
+                self._emit_archive_event({"type": "archive_step", "step": "Removing instance folder…"})
                 log.debug("[archive] emitted %s", "archive_step")
                 t_rm = time.monotonic()
                 shutil.rmtree(str(inst_dir))

@@ -186,14 +186,16 @@ export default {
           const running = archiveModal.value.steps.find(s => s.state === 'run')
           if (running) running.pct = event.pct
           window.pywebview.api.log_js_error('debug', '[archive] progress pct=' + event.pct)
+        } else if (event.type === 'archive_log') {
+          if (event.line != null) archiveModal.value.logs = [...archiveModal.value.logs, event.line]
+          window.pywebview.api.log_js_error('debug', '[archive] log line appended: ' + event.line)
         } else if (event.type === 'archive_step') {
-          if (event.prev_log != null) archiveModal.value.logs = [...archiveModal.value.logs, event.prev_log]
           const steps = archiveModal.value.steps
           const runIdx = steps.findIndex(s => s.state === 'run')
           if (runIdx >= 0) { steps[runIdx].state = 'done'; steps[runIdx].pct = null }
           const next = steps.find(s => s.state === 'wait')
           if (next) { next.state = 'run'; next.pct = event.pct ?? 0 }
-          window.pywebview.api.log_js_error('debug', '[archive] step transition -> "' + event.step + '", prev_log appended: ' + (event.prev_log != null))
+          window.pywebview.api.log_js_error('debug', '[archive] step transition -> "' + event.step + '"')
         } else if (event.type === 'archive_done') {
           window.__onProgress = prevHandler
           const steps = archiveModal.value.steps
