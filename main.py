@@ -455,7 +455,7 @@ class Api:
                     f"Zip size:    {zip_size_mb} MB",
                     f"Destination: {sync_dir}",
                 ]
-                log.info("Archived instance %r → %s", instance_name, zip_path)
+                log.info("Archived instance %r to %s", instance_name, zip_path)
                 self._emit_archive_done(True, None, summary)
             except Exception as e:
                 log.error("archive_instance failed for %r: %s", instance_name, e)
