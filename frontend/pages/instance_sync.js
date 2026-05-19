@@ -202,9 +202,9 @@ export default {
           const steps = archiveModal.value.steps
           if (event.ok) {
             steps.forEach(s => { if (s.state !== 'done') s.state = 'done' })
-            archiveModal.value.done = true
             archiveModal.value.error = false
-            load()
+            archiveModal.value.done = true  // show Close immediately
+            load()  // refresh list in background
           } else {
             const running = steps.find(s => s.state === 'run')
             if (running) running.state = 'err'
