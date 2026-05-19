@@ -162,7 +162,6 @@ export default {
     const openSettings = async (instName) => {
       settingsModal.value = { show: true, loading: true, saving: false, instance: instName, form: null }
       archiveConfirm.value = null
-      archiveError.value = null
       try {
         await window.__apiReady
         const s = await window.pywebview.api.get_instance_settings(instName)
@@ -185,7 +184,6 @@ export default {
     const closeSettings = () => {
       settingsModal.value = { show: false, loading: false, saving: false, instance: null, form: null }
       archiveConfirm.value = null
-      archiveError.value = null
     }
 
     const saveSettings = async () => {

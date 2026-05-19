@@ -377,14 +377,7 @@ export default {
               </div>
             </div>
           </div>
-          <!-- Archive queue banner -->
-          <div v-if="archiveQueue.length" style="padding:10px 16px;background:var(--accent-soft);border-bottom:1px solid var(--accent-line);display:flex;align-items:center;gap:10px">
-            <span :class="'spin'" v-html="icon('spin',13)" style="color:var(--accent)"></span>
-            <span class="fs-13" style="color:var(--accent)">
-              <strong>{{ archivingNow }}</strong> archiving…
-              <span v-if="archiveQueue.length > 1" class="text-2"> · {{ archiveQueue.length - 1 }} more queued</span>
-            </span>
-          </div>
+
           <div style="overflow-x:auto">
             <table class="data-table">
               <thead>
