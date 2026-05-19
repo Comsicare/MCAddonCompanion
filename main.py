@@ -1758,6 +1758,12 @@ class Api:
             import threading
             threading.Timer(0.1, win.destroy).start()
 
+    def close_progress_window(self) -> None:
+        win = self._win[0] if self._win else None
+        if win:
+            import threading
+            threading.Timer(0.1, win.destroy).start()
+
     def get_deletion_data(self) -> dict:
         return self._deletion_data
 
@@ -1988,27 +1994,33 @@ def _headless_startup(name: str) -> None:
         repo = get_repo_by_id(tracked["repo_id"])
         if repo:
             try:
+                import urllib.request, zipfile, io
+                from core.state import save_installed_instance, get_installed_instances
                 client = GitLabClient(repo["base_url"], repo["project_id"],
                                       repo.get("upload_token"), repo.get("read_token"))
                 latest = client.get_latest_version(tracked["pack_slug"])
                 if latest and latest != tracked["installed_version"]:
-                    meta = client.get_metadata(tracked["pack_slug"], latest)
-                    # Open update prompt window
+                    slug = tracked["pack_slug"]
+                    installed_ver = tracked["installed_version"]
+
+                    # Fetch metadata for latest to show in update prompt
+                    latest_meta = client.get_metadata(slug, latest)
+
+                    # Show update prompt window
                     win_ref: list = [None]
                     api = Api(win_ref)
                     api._update_prompt_data = {
                         "instance_name": name,
                         "pack_name": tracked["pack_name"],
-                        "installed_version": tracked["installed_version"],
+                        "installed_version": installed_ver,
                         "new_version": latest,
-                        "changenotes": meta.get("changenotes", ""),
+                        "changenotes": latest_meta.get("changenotes", ""),
                         "repo_id": tracked["repo_id"],
-                        "pack_slug": tracked["pack_slug"],
-                        "removed_mods": meta.get("removed_mods", []),
-                        "added_mods": meta.get("added_mods", []),
+                        "pack_slug": slug,
+                        "removed_mods": latest_meta.get("removed_mods", []),
+                        "added_mods": latest_meta.get("added_mods", []),
                     }
                     api._update_choice = "skip"
-
                     frontend_dir = Path(__file__).parent / "frontend"
                     window = webview.create_window(
                         f"Update available — {tracked['pack_name']}",
@@ -2022,49 +2034,163 @@ def _headless_startup(name: str) -> None:
                     webview.start(debug=not getattr(sys, "frozen", False))
 
                     if api._update_choice == "update":
-                        import urllib.request, zipfile, io
-                        slug = tracked["pack_slug"]
-                        zip_filename = f"{slug}-{latest}.zip"
-                        url_dl = client.build_download_url(slug, latest, zip_filename)
-                        req = urllib.request.Request(url_dl)
-                        req.add_header("User-Agent", "MCAddonCompanion")
-                        if repo.get("read_token"):
-                            req.add_header("PRIVATE-TOKEN", repo["read_token"])
+                        # Build ordered install chain (option A):
+                        # Fetch all versions between installed and latest.
+                        # Install intermediate versions only if they have removed_mods.
+                        # Always install latest as final step.
+                        all_versions = client.list_packages(slug)  # newest first
+                        # All versions oldest-first, strictly newer than installed, up to and including latest
+                        all_vers_oldest_first = [p["version"] for p in reversed(all_versions)]
                         try:
-                            with urllib.request.urlopen(req, timeout=120) as resp:
-                                data = resp.read()
-                        except Exception as e:
-                            log.warning("Update download failed: %s", e)
-                            data = None
+                            installed_idx = all_vers_oldest_first.index(installed_ver)
+                            newer = all_vers_oldest_first[installed_idx + 1:]
+                        except ValueError:
+                            newer = all_vers_oldest_first  # installed version not found, try all
+                        try:
+                            latest_idx = newer.index(latest)
+                            newer = newer[:latest_idx + 1]
+                        except ValueError:
+                            newer = [latest]
 
-                        if data:
-                            removed_mods = meta.get("removed_mods", [])
-                            mc_dir = get_minecraft_dir(INSTANCES_DIR, name)
-                            if mc_dir:
-                                mods_dir = mc_dir / "mods"
-                                for jar_name in removed_mods:
-                                    target = mods_dir / jar_name
-                                    if target.exists():
-                                        target.unlink()
-                                with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                                    members = zf.namelist()
-                                    has_mc = any(m.startswith(".minecraft/") for m in members)
-                                    has_plain = any(m.startswith("minecraft/") for m in members)
-                                    prefix = ".minecraft/" if has_mc else ("minecraft/" if has_plain else "")
-                                    for member in members:
-                                        if member.endswith("/"):
-                                            continue
-                                        rel = member[len(prefix):] if prefix else member
-                                        dest = mc_dir / Path(rel)
-                                        dest.parent.mkdir(parents=True, exist_ok=True)
-                                        with zf.open(member) as src, open(dest, "wb") as dst:
-                                            dst.write(src.read())
-                            add_tracked_pack({**tracked, "installed_version": latest})
-                            from core.state import save_installed_instance, get_installed_instances
-                            existing = next((i for i in get_installed_instances() if i["instance_name"] == name), {})
-                            save_installed_instance({**existing, "instance_name": name, "installed_version": latest,
-                                                     "repo_id": tracked["repo_id"], "pack_name": tracked["pack_name"],
-                                                     "pack_slug": tracked["pack_slug"]})
+                        # Build chain: intermediate versions with removed_mods + always latest
+                        chain = []
+                        for ver in newer:
+                            if ver == latest:
+                                chain.append((ver, latest_meta))
+                            else:
+                                m = client.get_metadata(slug, ver)
+                                if m.get("removed_mods"):
+                                    chain.append((ver, m))
+                        if not chain or chain[-1][0] != latest:
+                            chain.append((latest, latest_meta))
+
+                        log.info("Pack update chain for %r: %s", name, [v for v, _ in chain])
+
+                        # Open progress window
+                        prog_win_ref: list = [None]
+                        prog_api = Api(prog_win_ref)
+
+                        def _emit_prog(event):
+                            win = prog_win_ref[0]
+                            if win:
+                                try:
+                                    win.evaluate_js(f"window.__onProgress({json.dumps(event)})")
+                                except Exception:
+                                    pass
+
+                        mc_dir = get_minecraft_dir(INSTANCES_DIR, name)
+                        install_ok = False
+                        install_error = None
+
+                        def _run_install():
+                            nonlocal install_ok, install_error
+                            try:
+                                current_ver = installed_ver
+                                for ver, meta in chain:
+                                    log.info("Installing pack version %s for %r", ver, name)
+                                    zip_filename = f"{slug}-{ver}.zip"
+                                    url_dl = client.build_download_url(slug, ver, zip_filename)
+                                    req = urllib.request.Request(url_dl)
+                                    req.add_header("User-Agent", "MCAddonCompanion")
+                                    if repo.get("read_token"):
+                                        req.add_header("PRIVATE-TOKEN", repo["read_token"])
+
+                                    _emit_prog({"type": "step", "flow": "install", "step": 0,
+                                                "state": "running", "detail": ver})
+                                    try:
+                                        with urllib.request.urlopen(req, timeout=120) as resp:
+                                            content_length = int(resp.headers.get("Content-Length", 0))
+                                            chunks = []
+                                            downloaded = 0
+                                            while True:
+                                                chunk = resp.read(65536)
+                                                if not chunk:
+                                                    break
+                                                chunks.append(chunk)
+                                                downloaded += len(chunk)
+                                                if content_length:
+                                                    pct = min(99, int(downloaded * 99 / content_length))
+                                                    _emit_prog({"type": "progress", "flow": "install",
+                                                                "step": 0, "pct": pct})
+                                            data = b"".join(chunks)
+                                    except Exception as e:
+                                        log.warning("Pack download failed for %s: %s", ver, e)
+                                        install_error = str(e)
+                                        _emit_prog({"type": "step", "flow": "install", "step": 0,
+                                                    "state": "error", "detail": str(e)})
+                                        return
+
+                                    size_mb = len(data) / 1024 / 1024
+                                    _emit_prog({"type": "step", "flow": "install", "step": 0,
+                                                "state": "ok", "detail": f"{size_mb:.1f} MB"})
+
+                                    if mc_dir:
+                                        _emit_prog({"type": "step", "flow": "install", "step": 1,
+                                                    "state": "running", "detail": ver})
+                                        removed = meta.get("removed_mods", [])
+                                        mods_dir = mc_dir / "mods"
+                                        for jar_name in removed:
+                                            target = mods_dir / jar_name
+                                            if target.exists():
+                                                target.unlink()
+                                        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                                            members = zf.namelist()
+                                            has_mc = any(m.startswith(".minecraft/") for m in members)
+                                            has_plain = any(m.startswith("minecraft/") for m in members)
+                                            prefix = ".minecraft/" if has_mc else ("minecraft/" if has_plain else "")
+                                            count = sum(1 for m in members if not m.endswith("/"))
+                                            done = 0
+                                            for member in members:
+                                                if member.endswith("/"):
+                                                    continue
+                                                rel = member[len(prefix):] if prefix else member
+                                                dest = mc_dir / Path(rel)
+                                                dest.parent.mkdir(parents=True, exist_ok=True)
+                                                with zf.open(member) as src, open(dest, "wb") as dst:
+                                                    dst.write(src.read())
+                                                done += 1
+                                                pct = min(99, int(done * 99 / count)) if count else 99
+                                                _emit_prog({"type": "progress", "flow": "install",
+                                                            "step": 1, "pct": pct})
+                                        _emit_prog({"type": "step", "flow": "install", "step": 1,
+                                                    "state": "ok", "detail": f"{count} files"})
+                                    current_ver = ver
+
+                                install_ok = True
+                                add_tracked_pack({**tracked, "installed_version": latest})
+                                existing = next((i for i in get_installed_instances()
+                                                 if i["instance_name"] == name), {})
+                                save_installed_instance({
+                                    **existing, "instance_name": name,
+                                    "installed_version": latest,
+                                    "repo_id": tracked["repo_id"],
+                                    "pack_name": tracked["pack_name"],
+                                    "pack_slug": slug,
+                                })
+                                _emit_prog({"type": "summary", "flow": "install",
+                                            "text": f"Updated to {latest}", "tone": "ok"})
+                            except Exception as e:
+                                log.warning("Pack install failed: %s", e)
+                                install_error = str(e)
+                                _emit_prog({"type": "summary", "flow": "install",
+                                            "text": f"Error: {e}", "tone": "error"})
+
+                        install_thread = threading.Thread(target=_run_install, daemon=True)
+
+                        def _on_prog_loaded():
+                            install_thread.start()
+
+                        prog_window = webview.create_window(
+                            f"Updating {tracked['pack_name']}…",
+                            url=str(frontend_dir / "index.html") + "?mode=pack_update_progress",
+                            js_api=prog_api,
+                            width=520,
+                            height=340,
+                            resizable=False,
+                        )
+                        prog_win_ref[0] = prog_window
+                        prog_window.events.loaded += _on_prog_loaded
+                        webview.start(debug=not getattr(sys, "frozen", False))
             except Exception as e:
                 log.warning("Update check failed for %r: %s", name, e)
 

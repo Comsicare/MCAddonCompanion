@@ -5,6 +5,7 @@ import InstanceSyncPage from './pages/instance_sync.js'
 import PackRegistryPage from './pages/pack_registry.js'
 import UpdatePromptPage from './pages/update_prompt.js'
 import DeletionPromptPage from './pages/deletion_prompt.js'
+import PackUpdateProgressPage from './pages/pack_update_progress.js'
 
 // SVG icon helper — renders inline SVG with given path content
 export function icon(name, size = 16) {
@@ -95,6 +96,7 @@ const App = {
     const urlParams = new URLSearchParams(window.location.search)
     const isUpdatePrompt = urlParams.get('mode') === 'update_prompt'
     const isDeletionPrompt = urlParams.get('mode') === 'deletion_prompt'
+    const isPackUpdateProgress = urlParams.get('mode') === 'pack_update_progress'
 
     const page = ref('home')
     const progress = ref({})
@@ -276,7 +278,7 @@ const App = {
       } catch(e) { hostInfo.value = null }
     }
 
-    return { page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate, showUpdateModal, updateAutoShown, dismissUpdate, skipUpdate, startUpdateFromModal, openUpdateModal, NAV, PAGES, icon, isUpdatePrompt, isDeletionPrompt, UpdatePromptPage, showMenu, showVersionModal, manualUpdateResult, openVersionModal, checkUpdateManual, showDebugModal, hostInfo, resetConfirm, resetResult, confirmReset, openDebugModal, updateStream, streamSaving, setStream, gitlabPat, savePat, dumpState, createDump }
+    return { page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate, showUpdateModal, updateAutoShown, dismissUpdate, skipUpdate, startUpdateFromModal, openUpdateModal, NAV, PAGES, icon, isUpdatePrompt, isDeletionPrompt, isPackUpdateProgress, UpdatePromptPage, showMenu, showVersionModal, manualUpdateResult, openVersionModal, checkUpdateManual, showDebugModal, hostInfo, resetConfirm, resetResult, confirmReset, openDebugModal, updateStream, streamSaving, setStream, gitlabPat, savePat, dumpState, createDump }
   },
   template: `
     <template v-if="isUpdatePrompt">
@@ -284,6 +286,9 @@ const App = {
     </template>
     <template v-else-if="isDeletionPrompt">
       <deletion-prompt-page />
+    </template>
+    <template v-else-if="isPackUpdateProgress">
+      <pack-update-progress-page />
     </template>
     <div v-else class="app-shell">
       <header class="top-bar">
@@ -543,4 +548,5 @@ app.config.errorHandler = (err, _instance, info) => {
 }
 app.component('update-prompt-page', UpdatePromptPage)
    .component('deletion-prompt-page', DeletionPromptPage)
+   .component('pack-update-progress-page', PackUpdateProgressPage)
    .mount('#app')
