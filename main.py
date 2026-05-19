@@ -395,6 +395,7 @@ class Api:
                 mc_dir = get_minecraft_dir(instances_path, instance_name)
                 sync_dir = sync_path / "instance_sync" / instance_name
                 if mc_dir:
+                    self._emit_archive_event({"type": "archive_step", "step": "Syncing files to sync folder…"})
                     all_files = [(src, src.relative_to(mc_dir).as_posix())
                                  for src in mc_dir.rglob("*") if src.is_file()]
                     to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
@@ -406,12 +407,14 @@ class Api:
                         shutil.copy2(str(src), str(dest))
                         new_manifest[rel] = _file_stat(dest)
                     write_manifest(sync_dir, new_manifest)
+                self._emit_archive_event({"type": "archive_step", "step": "Creating zip backup…"})
                 zip_name = f"{instance_name}.archive.zip"
                 zip_path = instances_path / zip_name
                 with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
                     for f in inst_dir.rglob("*"):
                         if f.is_file():
                             zf.write(f, f.relative_to(instances_path))
+                self._emit_archive_event({"type": "archive_step", "step": "Removing instance folder…"})
                 shutil.rmtree(str(inst_dir))
                 log.info("Archived instance %r → %s", instance_name, zip_path)
                 self._emit_archive_done(True, None)
@@ -567,6 +570,7 @@ class Api:
                 mc_dir = get_minecraft_dir(instances_path, instance_name)
                 sync_dir = sync_path / "instance_sync" / instance_name
                 if mc_dir:
+                    self._emit_archive_event({"type": "archive_step", "step": "Syncing files to sync folder…"})
                     all_files = [(src, src.relative_to(mc_dir).as_posix())
                                  for src in mc_dir.rglob("*") if src.is_file()]
                     to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
@@ -578,6 +582,7 @@ class Api:
                         shutil.copy2(str(src), str(dest))
                         new_manifest[rel] = _file_stat(dest)
                     write_manifest(sync_dir, new_manifest)
+                self._emit_archive_event({"type": "archive_step", "step": "Removing instance folder…"})
                 shutil.rmtree(str(inst_dir))
                 log.info("Move-only archived instance %r (no zip)", instance_name)
                 self._emit_archive_done(True, None)
@@ -588,14 +593,17 @@ class Api:
         threading.Thread(target=_run, daemon=True).start()
         return {"ok": True, "started": True}
 
-    def _emit_archive_done(self, ok: bool, error: str | None) -> None:
-        """Emit archive_done progress event to the JS frontend."""
+    def _emit_archive_event(self, payload: dict) -> None:
+        """Emit an archive progress event to the JS frontend."""
         import webview
+        for win in webview.windows:
+            win.evaluate_js(f"window.__onProgress && window.__onProgress({__import__('json').dumps(payload)})")
+
+    def _emit_archive_done(self, ok: bool, error: str | None) -> None:
         payload = {"type": "archive_done", "ok": ok}
         if error:
             payload["error"] = error
-        for win in webview.windows:
-            win.evaluate_js(f"window.__onProgress && window.__onProgress({__import__('json').dumps(payload)})")
+        self._emit_archive_event(payload)
 
     def get_update_stream_api(self) -> str:
         from core.state import get_update_stream
