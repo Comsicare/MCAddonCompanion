@@ -98,7 +98,48 @@ export default {
 
     const closeArchiveModal = () => { archiveModal.value = _makeArchiveModal() }
 
-    const doArchive = async (instName, moveOnly) => {
+    const preflightModal = ref(null)
+
+    const openPreflight = async (instName, moveOnly) => {
+      preflightModal.value = { phase: 'scanning', instName, moveOnly }
+      archiveConfirm.value = null
+      try {
+        await window.__apiReady
+        const data = await window.pywebview.api.get_archive_preflight(instName)
+        const exclusions = {}
+        for (const entry of (data.dh_entries || [])) {
+          exclusions[entry.path_rel] = { sync: false, zip: false }
+        }
+        preflightModal.value = {
+          phase: 'ready',
+          instName,
+          moveOnly,
+          folderSizeMb: data.folder_size_mb,
+          fileCount: data.file_count,
+          dhEntries: data.dh_entries || [],
+          exclusions,
+        }
+      } catch(e) {
+        preflightModal.value = null
+      }
+    }
+
+    const closePreflight = () => { preflightModal.value = null }
+
+    const startArchiveFromPreflight = () => {
+      const pf = preflightModal.value
+      if (!pf || pf.phase !== 'ready') return
+      const excl = { exclude_from_sync: [], exclude_from_zip: [] }
+      for (const [pathRel, toggles] of Object.entries(pf.exclusions)) {
+        if (toggles.sync) excl.exclude_from_sync.push(pathRel)
+        if (toggles.zip) excl.exclude_from_zip.push(pathRel)
+      }
+      const dhExclusions = (excl.exclude_from_sync.length || excl.exclude_from_zip.length) ? excl : null
+      preflightModal.value = null
+      doArchive(pf.instName, pf.moveOnly, dhExclusions)
+    }
+
+    const doArchive = async (instName, moveOnly, dhExclusions) => {
       const stepLabels = moveOnly
         ? ['Reading files…', 'Moving files…', 'Removing instance folder…']
         : ['Reading files…', 'Copying files…', 'Creating zip archive…', 'Removing instance folder…']
@@ -150,7 +191,7 @@ export default {
       try {
         await window.__apiReady
         const method = moveOnly ? 'archive_instance_move_only' : 'archive_instance'
-        const r = await window.pywebview.api[method](instName)
+        const r = await window.pywebview.api[method](instName, dhExclusions || null)
         if (!r.ok && !r.started) {
           window.__onProgress = prevHandler
           archiveModal.value.logs = [r.error || 'Archive failed']
@@ -217,6 +258,7 @@ export default {
       openInstancesFolder,
       expandedRow, rowDetail, toggleRow, refreshRowDetail, fmtDate,
       archiveConfirm, archiveModal, closeArchiveModal, doArchive,
+      preflightModal, openPreflight, closePreflight, startArchiveFromPreflight,
       settingsModal, openSettings, closeSettings, saveSettings,
     }
   },
@@ -590,7 +632,7 @@ export default {
                   <template v-if="archiveConfirm === 'archive'">
                     <div class="fs-12 text-1" style="margin-bottom:6px">This will sync, zip, and remove the instance from Prism. Continue?</div>
                     <div class="flex items-center gap-6">
-                      <button class="btn-danger" @click="doArchive(settingsModal.instance, false)">Confirm Archive</button>
+                      <button class="btn-danger" @click="openPreflight(settingsModal.instance, false)">Confirm Archive</button>
                       <button class="btn btn-ghost btn-sm" @click="archiveConfirm = null">Cancel</button>
                     </div>
                   </template>
@@ -607,7 +649,7 @@ export default {
                   <template v-if="archiveConfirm === 'move_only'">
                     <div class="fs-12" style="color:var(--err);margin-bottom:6px">⚠ Warning: No zip backup — cannot recover if sync folder is lost.</div>
                     <div class="flex items-center gap-6">
-                      <button class="btn-danger" @click="doArchive(settingsModal.instance, true)">Yes, move only</button>
+                      <button class="btn-danger" @click="openPreflight(settingsModal.instance, true)">Yes, move only</button>
                       <button class="btn btn-ghost btn-sm" @click="archiveConfirm = null">Cancel</button>
                     </div>
                   </template>
@@ -646,6 +688,81 @@ export default {
       @cancel="closeArchiveModal(); closeSettings()"
       @retry="doArchive(settingsModal.instance, archiveModal.moveOnly)"
     />
+
+    <!-- Pre-flight modal -->
+    <teleport to="body">
+      <div v-if="preflightModal" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999">
+        <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:500px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line);flex:none">
+            <span class="fw-600 fs-14">Archive Pre-flight</span>
+            <button class="icon-btn" @click="closePreflight"><span v-html="icon('x',14)"></span></button>
+          </div>
+          <div style="padding:20px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:14px">
+            <template v-if="preflightModal.phase === 'scanning'">
+              <div class="fs-13 text-2">Scanning instance folder...</div>
+            </template>
+            <template v-else>
+              <div style="display:flex;gap:20px">
+                <div>
+                  <div class="kicker" style="margin-bottom:4px">Folder Size</div>
+                  <div class="mono fs-14">{{ preflightModal.folderSizeMb }} MB</div>
+                </div>
+                <div>
+                  <div class="kicker" style="margin-bottom:4px">Files</div>
+                  <div class="mono fs-14">{{ preflightModal.fileCount }}</div>
+                </div>
+              </div>
+              <template v-if="preflightModal.dhEntries.length">
+                <div>
+                  <div class="kicker" style="margin-bottom:8px">DistantHorizons LOD Data</div>
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    <div style="display:grid;gap:8px;padding:4px 0;border-bottom:1px solid var(--line)" :style="preflightModal.moveOnly ? 'grid-template-columns:1fr auto' : 'grid-template-columns:1fr auto auto'">
+                      <span class="fs-11 text-3">Entry</span>
+                      <span class="fs-11 text-3" style="text-align:center">Excl. Sync</span>
+                      <span v-if="!preflightModal.moveOnly" class="fs-11 text-3" style="text-align:center">Excl. Backup</span>
+                    </div>
+                    <template v-for="entry in preflightModal.dhEntries" :key="entry.path_rel">
+                      <div style="display:grid;gap:8px;align-items:center;padding:4px 0" :style="preflightModal.moveOnly ? 'grid-template-columns:1fr auto' : 'grid-template-columns:1fr auto auto'">
+                        <div>
+                          <div class="fs-13 text-0">{{ entry.type === 'server' ? 'Server' : 'World' }}: {{ entry.name }}</div>
+                          <div class="fs-11 text-3">{{ entry.size_mb }} MB</div>
+                        </div>
+                        <input type="checkbox" v-model="preflightModal.exclusions[entry.path_rel].sync" style="cursor:pointer">
+                        <input v-if="!preflightModal.moveOnly" type="checkbox" v-model="preflightModal.exclusions[entry.path_rel].zip" style="cursor:pointer">
+                      </div>
+                    </template>
+                  </div>
+                </div>
+                <template v-for="entry in preflightModal.dhEntries" :key="'warn-' + entry.path_rel">
+                  <div v-if="preflightModal.moveOnly && preflightModal.exclusions[entry.path_rel].sync"
+                    style="padding:8px 12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.35);border-radius:6px;font-size:12px;color:#f59e0b">
+                    LOD data for "{{ entry.name }}" will be permanently deleted - no backup in Move Only mode.
+                  </div>
+                  <div v-if="!preflightModal.moveOnly && preflightModal.exclusions[entry.path_rel].sync && preflightModal.exclusions[entry.path_rel].zip"
+                    style="padding:8px 12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.35);border-radius:6px;font-size:12px;color:#f59e0b">
+                    LOD data for "{{ entry.name }}" will be permanently deleted when the instance is removed.
+                  </div>
+                  <div v-if="!preflightModal.moveOnly && !preflightModal.exclusions[entry.path_rel].sync && preflightModal.exclusions[entry.path_rel].zip"
+                    style="padding:8px 12px;background:rgba(0,0,0,.15);border:1px solid var(--line);border-radius:6px;font-size:12px;color:var(--text-2)">
+                    LOD data for "{{ entry.name }}" will be synced but not included in the zip backup.
+                  </div>
+                  <div v-if="!preflightModal.moveOnly && preflightModal.exclusions[entry.path_rel].sync && !preflightModal.exclusions[entry.path_rel].zip"
+                    style="padding:8px 12px;background:rgba(0,0,0,.15);border:1px solid var(--line);border-radius:6px;font-size:12px;color:var(--text-2)">
+                    LOD data for "{{ entry.name }}" will be in the zip backup but not synced to Nextcloud.
+                  </div>
+                </template>
+              </template>
+            </template>
+          </div>
+          <div style="padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;flex:none">
+            <button class="btn btn-ghost btn-sm" @click="closePreflight">Cancel</button>
+            <button class="btn btn-primary btn-sm" :disabled="preflightModal.phase === 'scanning'" @click="startArchiveFromPreflight">
+              Start Archive
+            </button>
+          </div>
+        </div>
+      </div>
+    </teleport>
     </main>
   `
 }
