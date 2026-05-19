@@ -531,6 +531,23 @@ class Api:
                             last_pct = pct
                             last_emit_t = now
                     write_manifest(sync_dir, new_manifest)
+                    # Also copy instance-level Prism files (instance.cfg, mmc-pack.json, mrpack/ etc.)
+                    meta_dir = sync_dir / "_instance_meta"
+                    meta_dir.mkdir(parents=True, exist_ok=True)
+                    mc_name = mc_dir.name if mc_dir else "minecraft"
+                    for item in inst_dir.iterdir():
+                        if item.name == mc_name:
+                            continue
+                        try:
+                            if item.is_file():
+                                shutil.copy2(str(item), str(meta_dir / item.name))
+                            elif item.is_dir():
+                                dest_sub = meta_dir / item.name
+                                if dest_sub.exists():
+                                    shutil.rmtree(str(dest_sub))
+                                shutil.copytree(str(item), str(dest_sub))
+                        except Exception as e:
+                            log.warning("archive meta copy failed for %s: %s", item.name, e)
                     log_copy = f"Copying files...  {files_copied} files  ({round(synced_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_copy)}]"
                 else:
                     log_copy = None
@@ -652,15 +669,29 @@ class Api:
                             with zf.open(member) as src, open(dest, "wb") as dst:
                                 dst.write(src.read())
 
+        # Restore instance-level Prism files from _instance_meta/ if present
+        meta_dir = sync_dir / "_instance_meta"
+        if meta_dir.exists():
+            for item in meta_dir.iterdir():
+                try:
+                    if item.is_file():
+                        shutil.copy2(str(item), str(inst_dir / item.name))
+                    elif item.is_dir():
+                        dest_sub = inst_dir / item.name
+                        if dest_sub.exists():
+                            shutil.rmtree(str(dest_sub))
+                        shutil.copytree(str(item), str(dest_sub))
+                except Exception as e:
+                    log.warning("restore meta failed for %s: %s", item.name, e)
+
         # Restore minecraft/ contents from sync folder
         mc_dir.mkdir(parents=True, exist_ok=True)
         for src in sync_dir.rglob("*"):
-            if src.is_file() and src.name != "manifest.json":
+            if src.is_file() and not src.is_relative_to(meta_dir) and src.name != "manifest.json":
                 rel = src.relative_to(sync_dir)
                 dest = mc_dir / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                import shutil as _shutil
-                _shutil.copy2(str(src), str(dest))
+                shutil.copy2(str(src), str(dest))
 
         log.info("Restored instance %r from sync folder", instance_name)
         return {"ok": True, "has_zip": zip_path.exists(), "zip_path": str(zip_path)}
@@ -817,6 +848,23 @@ class Api:
                             last_pct = pct
                             last_emit_t = now
                     write_manifest(sync_dir, new_manifest)
+                    # Also copy instance-level Prism files (instance.cfg, mmc-pack.json, mrpack/ etc.)
+                    meta_dir = sync_dir / "_instance_meta"
+                    meta_dir.mkdir(parents=True, exist_ok=True)
+                    mc_name = mc_dir.name if mc_dir else "minecraft"
+                    for item in inst_dir.iterdir():
+                        if item.name == mc_name:
+                            continue
+                        try:
+                            if item.is_file():
+                                shutil.copy2(str(item), str(meta_dir / item.name))
+                            elif item.is_dir():
+                                dest_sub = meta_dir / item.name
+                                if dest_sub.exists():
+                                    shutil.rmtree(str(dest_sub))
+                                shutil.copytree(str(item), str(dest_sub))
+                        except Exception as e:
+                            log.warning("archive meta copy failed for %s: %s", item.name, e)
                     log_move = f"Moving files...  {files_copied} files  ({round(synced_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_move)}]"
                 else:
                     log_move = None
