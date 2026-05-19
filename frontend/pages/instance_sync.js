@@ -300,8 +300,8 @@ export default {
       restoring.value = true
       try {
         await window.__apiReady
-        const result = await window.pywebview.api.restore_instance(selectedArchive.value)
-        restoreResult.value = { ...result, instance_name: selectedArchive.value }
+        const result = await window.pywebview.api.restore_instance(selectedArchive.value.name)
+        restoreResult.value = { ...result, instance_name: selectedArchive.value.name }
         if (result.ok) await load()
       } catch(e) { restoreResult.value = { ok: false, error: String(e) } }
       restoring.value = false
@@ -519,8 +519,11 @@ export default {
                     <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Select instance to restore</div>
                     <select v-model="selectedArchive" class="input">
                       <option value="" disabled>Choose…</option>
-                      <option v-for="name in archivedList" :key="name" :value="name">{{ name }}</option>
+                      <option v-for="entry in archivedList" :key="entry.name" :value="entry">{{ entry.name }}{{ entry.has_zip ? '' : ' (Move Only — no zip backup)' }}</option>
                     </select>
+                  </div>
+                  <div v-if="selectedArchive && !selectedArchive.has_zip" style="padding:8px 12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.35);border-radius:6px;font-size:12px;color:#f59e0b">
+                    This instance was archived without a zip backup. Only synced files will be restored. Any files not in the sync folder are gone.
                   </div>
                 </template>
               </template>

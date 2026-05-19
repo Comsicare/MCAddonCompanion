@@ -601,15 +601,23 @@ class Api:
         return {"ok": True, "started": True}
 
     def get_archived_instances(self) -> list:
-        """Return list of archived instances (zip files in instances dir)."""
+        """Return archived instances — both zip-backed and move-only (sync folder only)."""
         cfg = get_instance_sync_config()
         instances_path = Path(cfg.get("instances_path") or str(INSTANCES_DIR))
-        if not instances_path.exists():
-            return []
-        return sorted(
-            p.name.replace(".archive.zip", "")
-            for p in instances_path.glob("*.archive.zip")
-        )
+        sync_path_str = cfg.get("sync_path") or ""
+        results = {}
+        if instances_path.exists():
+            for p in instances_path.glob("*.archive.zip"):
+                name = p.name.replace(".archive.zip", "")
+                results[name] = {"name": name, "has_zip": True}
+        if sync_path_str:
+            sync_root = Path(sync_path_str) / "instance_sync"
+            if sync_root.exists():
+                for d in sync_root.iterdir():
+                    if d.is_dir() and d.name not in results:
+                        if not (instances_path / d.name).exists():
+                            results[d.name] = {"name": d.name, "has_zip": False}
+        return sorted(results.values(), key=lambda x: x["name"])
 
     def restore_instance(self, instance_name: str) -> dict:
         """Restore instance from sync folder back into Prism instances dir."""
