@@ -86,6 +86,7 @@ def run_exit_sync(
     sync_instance_dir: Path,
     extra_blacklist: list[str] | None = None,
     on_progress=None,
+    exclude_paths: list[str] | None = None,
 ) -> dict:
     """
     Copy .minecraft/ tree to sync_instance_dir, skipping blacklisted files.
@@ -106,7 +107,12 @@ def run_exit_sync(
         for src in minecraft_dir.rglob("*")
         if src.is_file()
     ]
-    to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel, extra_blacklist)]
+    _excl = exclude_paths or []
+    to_copy = [
+        (src, rel) for src, rel in all_files
+        if not is_blacklisted(rel, extra_blacklist)
+        and not any(rel == p or rel.startswith(p.rstrip('/') + '/') for p in _excl)
+    ]
     skipped = len(all_files) - len(to_copy)
     total = len(to_copy)
 

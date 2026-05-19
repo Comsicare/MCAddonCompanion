@@ -374,7 +374,76 @@ class Api:
         repair_hooks()
         return {"ok": True}
 
-    def archive_instance(self, instance_name: str) -> dict:
+    def get_archive_preflight(self, instance_name: str) -> dict:
+        """Scan instance folder for size/file count and DistantHorizons LOD data."""
+        from modules.instance_sync.sync import is_blacklisted
+        cfg = get_instance_sync_config()
+        instances_path = Path(cfg.get("instances_path") or str(INSTANCES_DIR))
+        mc_dir = get_minecraft_dir(instances_path, instance_name)
+        if not mc_dir or not mc_dir.exists():
+            return {"folder_size_mb": 0, "file_count": 0, "dh_entries": []}
+
+        total_size = 0
+        file_count = 0
+        for f in mc_dir.rglob("*"):
+            if f.is_file() and not is_blacklisted(f.relative_to(mc_dir).as_posix()):
+                try:
+                    total_size += f.stat().st_size
+                    file_count += 1
+                except Exception:
+                    pass
+
+        dh_entries = []
+
+        # Server LOD data: Distant_Horizons_server_data/<server_name>/
+        dh_server_root = mc_dir / "Distant_Horizons_server_data"
+        if dh_server_root.is_dir():
+            for server_dir in sorted(dh_server_root.iterdir()):
+                if server_dir.is_dir():
+                    size = 0
+                    for f in server_dir.rglob("*"):
+                        if f.is_file():
+                            try:
+                                size += f.stat().st_size
+                            except Exception:
+                                pass
+                    rel = "Distant_Horizons_server_data/" + server_dir.name
+                    dh_entries.append({
+                        "type": "server",
+                        "name": server_dir.name,
+                        "size_mb": round(size / 1_048_576, 1),
+                        "path_rel": rel,
+                    })
+
+        # World LOD data: saves/<world_name>/data/DistantHorizons.sqlite (+ DIM variants)
+        saves_root = mc_dir / "saves"
+        if saves_root.is_dir():
+            for world_dir in sorted(saves_root.iterdir()):
+                if not world_dir.is_dir():
+                    continue
+                sqlite_paths = [
+                    world_dir / "data" / "DistantHorizons.sqlite",
+                    world_dir / "DIM-1" / "data" / "DistantHorizons.sqlite",
+                    world_dir / "DIM1" / "data" / "DistantHorizons.sqlite",
+                ]
+                found = [p for p in sqlite_paths if p.exists()]
+                if found:
+                    size = sum(p.stat().st_size for p in found)
+                    rel = "saves/" + world_dir.name
+                    dh_entries.append({
+                        "type": "world",
+                        "name": world_dir.name,
+                        "size_mb": round(size / 1_048_576, 1),
+                        "path_rel": rel,
+                    })
+
+        return {
+            "folder_size_mb": round(total_size / 1_048_576, 1),
+            "file_count": file_count,
+            "dh_entries": dh_entries,
+        }
+
+    def archive_instance(self, instance_name: str, dh_exclusions: dict | None = None) -> dict:
         """Kick off archive (sync + zip + delete) in a background thread. Emits archive_done progress event."""
         import threading
 
@@ -410,7 +479,12 @@ class Api:
                 if mc_dir:
                     all_files = [(src, src.relative_to(mc_dir).as_posix())
                                  for src in mc_dir.rglob("*") if src.is_file()]
-                    to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
+                    _sync_excl = (dh_exclusions or {}).get("exclude_from_sync", [])
+                    to_copy = [
+                        (src, rel) for src, rel in all_files
+                        if not is_blacklisted(rel)
+                        and not any(rel == p or rel.startswith(p.rstrip('/') + '/') for p in _sync_excl)
+                    ]
                     log.debug("[archive] emitting %s prev_log=%r", "archive_step", None)
                     self._emit_archive_event({"type": "archive_step", "step": "Reading files…", "pct": 0})
                     log.debug("[archive] emitted %s", "archive_step")
@@ -461,7 +535,16 @@ class Api:
                 self._emit_archive_event({"type": "archive_step", "step": "Creating zip archive…", "pct": 0})
                 log.debug("[archive] emitted %s", "archive_step")
                 t_zip = time.monotonic()
-                zip_files = [f for f in inst_dir.rglob("*") if f.is_file()]
+                _zip_excl = (dh_exclusions or {}).get("exclude_from_zip", [])
+                def _zip_excluded(f: Path) -> bool:
+                    if not _zip_excl or mc_dir is None:
+                        return False
+                    try:
+                        rel = f.relative_to(mc_dir).as_posix()
+                        return any(rel == p or rel.startswith(p.rstrip('/') + '/') for p in _zip_excl)
+                    except ValueError:
+                        return False
+                zip_files = [f for f in inst_dir.rglob("*") if f.is_file() and not _zip_excluded(f)]
                 total_zip_bytes = sum(f.stat().st_size for f in zip_files) or 1
                 zipped_bytes = 0
                 last_pct = 0
@@ -632,7 +715,7 @@ class Api:
 
         return result
 
-    def archive_instance_move_only(self, instance_name: str) -> dict:
+    def archive_instance_move_only(self, instance_name: str, dh_exclusions: dict | None = None) -> dict:
         """Kick off move-only archive (sync + delete, no zip) in a background thread. Emits archive_done event."""
         import threading
 
@@ -668,7 +751,12 @@ class Api:
                 if mc_dir:
                     all_files = [(src, src.relative_to(mc_dir).as_posix())
                                  for src in mc_dir.rglob("*") if src.is_file()]
-                    to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
+                    _sync_excl = (dh_exclusions or {}).get("exclude_from_sync", [])
+                    to_copy = [
+                        (src, rel) for src, rel in all_files
+                        if not is_blacklisted(rel)
+                        and not any(rel == p or rel.startswith(p.rstrip('/') + '/') for p in _sync_excl)
+                    ]
                     log.debug("[archive] emitting %s prev_log=%r", "archive_step", None)
                     self._emit_archive_event({"type": "archive_step", "step": "Reading files…", "pct": 0})
                     log.debug("[archive] emitted %s", "archive_step")
