@@ -152,7 +152,8 @@ Go to **three-dot menu → Help & Debug** to:
 | **v0.4.0-alpha** | Polish existing modules — archive pre-flight, instance sync conflict detection, small fixes |
 | **v0.5.0-alpha** | Stability, efficiency, and performance — file operation optimization, code audit |
 | **v0.6.0-alpha** | Multi-launcher support — Prism, MultiMC, Modrinth App, CurseForge, Official Launcher |
-| **v0.7.0-alpha** | Code audit, bugfixing, diagnostic upload for easier support |
+| **v0.7.0-alpha** | Setup wizard / welcome tour for first-time configuration |
+| **v0.8.0-alpha** | Code audit, bugfixing, diagnostic upload for easier support |
 | **v1.0.0-pre** | User testing and feedback |
 | **v1.0.0** | Stable release |
 
