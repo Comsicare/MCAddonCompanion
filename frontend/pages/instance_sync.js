@@ -222,6 +222,14 @@ export default {
       restoreResult.value = null
     }
 
+    const pickFolderInto = async (target, field) => {
+      try {
+        await window.__apiReady
+        const result = await window.pywebview.api.pick_folder()
+        if (result) target[field] = result
+      } catch(e) {}
+    }
+
     return {
       data, loading, error, query, filtered, icon, abbr, load, toggleDefault, toggleOverride,
       showSetup, setupForm, setupSaving, setupError, openSetup, saveSetup,
@@ -230,7 +238,7 @@ export default {
       openRestoreModal, doRestore, deleteZip, closeRestoreModal,
       showModuleSettings, moduleSettingsForm, moduleSettingsSaving, moduleSettingsError,
       openModuleSettings, saveModuleSettings, resetModuleSync,
-      fmtDate, expandedError,
+      fmtDate, expandedError, pickFolderInto,
     }
   },
   template: `
@@ -488,12 +496,18 @@ export default {
             <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
               <div>
                 <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Prism Instances Path</div>
-                <input v-model="moduleSettingsForm.instances_path" class="input input-mono" placeholder="C:\Users\…\PrismLauncher\instances">
+                <div style="display:flex;gap:6px">
+                  <input v-model="moduleSettingsForm.instances_path" class="input input-mono" style="flex:1;min-width:0" placeholder="C:\Users\…\PrismLauncher\instances">
+                  <button class="btn btn-ghost btn-sm" style="flex:none" @click="pickFolderInto(moduleSettingsForm, 'instances_path')"><span v-html="icon('folder',13)"></span> Browse</button>
+                </div>
                 <div class="fs-12 text-3 mt-4">Folder containing all Prism instance subfolders.</div>
               </div>
               <div>
                 <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Sync Folder Path</div>
-                <input v-model="moduleSettingsForm.sync_path" class="input input-mono" placeholder="C:\Users\…\Nextcloud\Minecraft">
+                <div style="display:flex;gap:6px">
+                  <input v-model="moduleSettingsForm.sync_path" class="input input-mono" style="flex:1;min-width:0" placeholder="C:\Users\…\Nextcloud\Minecraft">
+                  <button class="btn btn-ghost btn-sm" style="flex:none" @click="pickFolderInto(moduleSettingsForm, 'sync_path')"><span v-html="icon('folder',13)"></span> Browse</button>
+                </div>
                 <div class="fs-12 text-3 mt-4">Folder where instance files will be synced (e.g. Nextcloud).</div>
               </div>
               <div v-if="moduleSettingsError" style="padding:8px 12px;border-radius:6px;background:var(--err-soft);color:var(--err);font-size:12px">{{ moduleSettingsError }}</div>
@@ -523,12 +537,18 @@ export default {
             <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
               <div>
                 <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Prism Instances Path</div>
-                <input v-model="setupForm.instances_path" class="input input-mono" placeholder="C:\Users\…\PrismLauncher\instances">
+                <div style="display:flex;gap:6px">
+                  <input v-model="setupForm.instances_path" class="input input-mono" style="flex:1;min-width:0" placeholder="C:\Users\…\PrismLauncher\instances">
+                  <button class="btn btn-ghost btn-sm" style="flex:none" @click="pickFolderInto(setupForm, 'instances_path')"><span v-html="icon('folder',13)"></span> Browse</button>
+                </div>
                 <div class="fs-12 text-3 mt-4">Folder containing all Prism instance subfolders.</div>
               </div>
               <div>
                 <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Sync Folder Path</div>
-                <input v-model="setupForm.sync_path" class="input input-mono" placeholder="C:\Users\…\Nextcloud\Minecraft">
+                <div style="display:flex;gap:6px">
+                  <input v-model="setupForm.sync_path" class="input input-mono" style="flex:1;min-width:0" placeholder="C:\Users\…\Nextcloud\Minecraft">
+                  <button class="btn btn-ghost btn-sm" style="flex:none" @click="pickFolderInto(setupForm, 'sync_path')"><span v-html="icon('folder',13)"></span> Browse</button>
+                </div>
                 <div class="fs-12 text-3 mt-4">Folder where instance files will be synced (e.g. Nextcloud).</div>
               </div>
               <div v-if="setupError" style="padding:8px 12px;border-radius:6px;background:var(--err-soft);color:var(--err);font-size:12px">{{ setupError }}</div>
