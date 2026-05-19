@@ -1896,20 +1896,26 @@ class Api:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def _run_deletion_prompt(instance_name: str, deletions: list[str]) -> str:
-    """Open a PyWebView window listing deleted files. Returns 'sync' | 'keep' | 'cancel'."""
+def _run_deletion_prompt(instance_name: str, deletions: list[str], mode: str = "exit") -> str:
+    """Open a PyWebView window listing deleted/missing files.
+    mode='exit': files deleted from instance before exit sync.
+    mode='startup': files missing from instance that startup sync would restore.
+    Returns 'restore' | 'delete' | 'cancel' (exit) or 'restore' | 'keep' | 'cancel' (startup).
+    """
     win_ref: list = [None]
     api = Api(win_ref)
     api._deletion_data = {
         "instance": instance_name,
         "deleted": deletions,
         "timeout": 30,
+        "mode": mode,
     }
     api._deletion_choice = "cancel"
 
+    title = f"Restore files? - {instance_name}" if mode == "startup" else f"Sync deletions? - {instance_name}"
     frontend_dir = Path(__file__).parent / "frontend"
     window = webview.create_window(
-        f"Sync deletions? - {instance_name}",
+        title,
         url=str(frontend_dir / "index.html") + "?mode=deletion_prompt",
         js_api=api,
         width=480,
@@ -2049,8 +2055,36 @@ def _headless_startup(name: str) -> None:
             except Exception as e:
                 log.warning("Update check failed for %r: %s", name, e)
 
-    # Run normal startup sync
+    # Run startup sync, prompting before restoring files missing from instance
+    from modules.instance_sync.sync import read_manifest, _check_restorations
     plan = _plan_instance(name, "startup")
+
+    if plan["instance_task"] == "Startup Sync" and plan["mc_dir"] and plan["sync_dir"]:
+        manifest = read_manifest(plan["sync_dir"])
+        if manifest:
+            restorations = _check_restorations(plan["mc_dir"], plan["sync_dir"], manifest)
+            if restorations:
+                log.info("Detected %d missing files for %r - opening prompt", len(restorations), name)
+                choice = _run_deletion_prompt(name, restorations, mode="startup")
+                log.info("Startup prompt choice for %r: %s", name, choice)
+                if choice == "cancel":
+                    sys.exit(0)
+                elif choice == "keep":
+                    # Remove the files from the sync folder so startup sync won't restore them
+                    import shutil
+                    manifest = read_manifest(plan["sync_dir"])
+                    for rel in restorations:
+                        src = plan["sync_dir"] / rel
+                        try:
+                            if src.exists():
+                                src.unlink()
+                            manifest.pop(rel, None)
+                        except Exception as e:
+                            log.warning("Failed to remove %s from sync: %s", rel, e)
+                    from modules.instance_sync.sync import write_manifest
+                    write_manifest(plan["sync_dir"], manifest)
+                # choice == "restore": fall through, startup sync restores normally
+
     def _noop(event): pass
     _execute_instance_plan(_noop, name, plan)
     sys.exit(0)

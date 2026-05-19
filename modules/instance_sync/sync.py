@@ -70,6 +70,24 @@ def _check_deletions(
     return sorted(set(old_manifest.keys()) - current)
 
 
+def _check_restorations(
+    mc_dir: Path,
+    sync_dir: Path,
+    manifest: dict,
+    extra_blacklist: list[str] | None = None,
+) -> list[str]:
+    """Return sorted list of rel paths present in sync_dir manifest but missing from mc_dir.
+    These are files that startup sync would restore — user should confirm before overwriting."""
+    if not mc_dir.exists():
+        return []
+    current = {
+        src.relative_to(mc_dir).as_posix()
+        for src in mc_dir.rglob("*")
+        if src.is_file() and not is_blacklisted(src.relative_to(mc_dir).as_posix(), extra_blacklist)
+    }
+    return sorted(k for k in manifest if k not in current and (sync_dir / k).exists())
+
+
 def read_last_result(sync_instance_dir: Path) -> dict:
     """Read last_result.json from sync folder. Returns {} if missing or corrupt."""
     p = sync_instance_dir / "last_result.json"

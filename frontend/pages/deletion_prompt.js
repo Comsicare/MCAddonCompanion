@@ -40,13 +40,13 @@ export default {
         <div style="display:flex;align-items:center;gap:10px">
           <span v-html="icon('alert', 22)" style="color:#f59e0b;flex:none"></span>
           <div>
-            <div class="fw-600 text-0 fs-14">Files deleted since last sync</div>
+            <div class="fw-600 text-0 fs-14">{{ data.mode === 'startup' ? 'Files missing from instance' : 'Files deleted since last sync' }}</div>
             <div class="fs-12 text-2">{{ data.instance }}</div>
           </div>
         </div>
 
         <div style="padding:10px 14px;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;flex:1;overflow-y:auto;min-height:0">
-          <div class="fs-12 text-3 fw-500" style="margin-bottom:6px">{{ data.deleted.length }} file{{ data.deleted.length !== 1 ? 's' : '' }} removed from instance:</div>
+          <div class="fs-12 text-3 fw-500" style="margin-bottom:6px">{{ data.deleted.length }} file{{ data.deleted.length !== 1 ? 's' : '' }} {{ data.mode === 'startup' ? 'not in instance (sync has a copy):' : 'removed from instance:' }}</div>
           <div v-for="f in data.deleted" :key="f" class="mono fs-11 text-2" style="padding:1px 0">{{ f }}</div>
         </div>
 
@@ -54,7 +54,18 @@ export default {
           No response in {{ countdown }}s will cancel the sync.
         </div>
 
-        <div style="display:flex;gap:8px">
+        <div v-if="data.mode === 'startup'" style="display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm" style="flex:1;font-size:11px" @click="choose('cancel')">
+            Cancel
+          </button>
+          <button class="btn btn-ghost btn-sm" style="flex:1;font-size:11px" @click="choose('keep')">
+            Keep Deleted
+          </button>
+          <button class="btn btn-primary btn-sm" style="flex:1;font-size:11px" @click="choose('restore')">
+            Restore File
+          </button>
+        </div>
+        <div v-else style="display:flex;gap:8px">
           <button class="btn btn-ghost btn-sm" style="flex:1;font-size:11px" @click="choose('cancel')">
             Cancel
           </button>
