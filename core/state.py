@@ -94,8 +94,8 @@ def get_instance_effective_settings(cfg: dict, instance_name: str) -> dict:
     inst = cfg.get("instances", {}).get(instance_name, {})
     return {
         "enabled": inst.get("enabled", False),
-        "startup_sync": inst.get("startup_sync") if inst.get("startup_sync") is not None else defaults["startup_sync"],
-        "exit_sync": inst.get("exit_sync") if inst.get("exit_sync") is not None else defaults["exit_sync"],
+        "startup_sync": inst.get("startup_sync") if inst.get("startup_sync") is not None else defaults.get("startup_sync", False),
+        "exit_sync": inst.get("exit_sync") if inst.get("exit_sync") is not None else defaults.get("exit_sync", True),
     }
 
 
