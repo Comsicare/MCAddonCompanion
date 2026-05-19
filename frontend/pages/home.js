@@ -113,11 +113,6 @@ export default {
       window.__onProgress = async (event) => {
         if (event.type === 'archive_log') {
           archiveModal.value.logs = [...archiveModal.value.logs, event.line]
-        } else if (event.type === 'archive_log_update') {
-          const logs = [...archiveModal.value.logs]
-          if (logs.length) logs[logs.length - 1] = event.line
-          else logs.push(event.line)
-          archiveModal.value.logs = logs
         } else if (event.type === 'archive_progress') {
           const running = archiveModal.value.steps.find(s => s.state === 'run')
           if (running) running.pct = event.pct
