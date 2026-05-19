@@ -364,7 +364,7 @@ const App = {
     <!-- Help & Debug modal -->
     <teleport to="body">
       <div v-if="showDebugModal" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:300" @click.self="showDebugModal = false">
-        <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:480px;max-width:95vw;max-height:85vh;overflow-y:auto">
+        <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:560px;max-width:95vw;max-height:85vh;overflow-y:auto">
           <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg-1);z-index:1">
             <span class="fw-600 fs-14">Help &amp; Debug</span>
             <button class="icon-btn" @click="showDebugModal = false"><span v-html="icon('x', 14)"></span></button>
@@ -374,9 +374,9 @@ const App = {
               <div class="kicker" style="margin-bottom:10px">Diagnostics</div>
               <div style="padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line);display:flex;flex-direction:column;gap:6px">
                 <template v-if="hostInfo">
-                  <div v-for="(val, key) in hostInfo" :key="key" style="display:flex;justify-content:space-between;align-items:center">
-                    <span class="text-2 fs-13">{{ key }}</span>
-                    <span class="mono fs-12 text-0">{{ val }}</span>
+                  <div v-for="(val, key) in hostInfo" :key="key" style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+                    <span class="text-2 fs-13" style="flex:none">{{ key }}</span>
+                    <span class="mono fs-12 text-0" style="word-break:break-all;text-align:right">{{ val }}</span>
                   </div>
                 </template>
                 <span v-else class="fs-13 text-3">Loading…</span>

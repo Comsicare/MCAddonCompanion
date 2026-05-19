@@ -97,6 +97,7 @@ body {
   border-radius: var(--r-btn); cursor: pointer; transition: all .12s;
 }
 .icon-btn:hover { background: var(--bg-2); color: var(--text-0); border-color: var(--line); }
+.menu-item:hover { background: var(--bg-2) !important; }
 
 /* buttons */
 .btn {
