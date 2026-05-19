@@ -40,7 +40,40 @@ window.__icon = icon
 // Pages should await window.__apiReady before calling window.pywebview.api
 let __apiReadyResolve
 window.__apiReady = new Promise(resolve => { __apiReadyResolve = resolve })
-window.addEventListener('pywebviewready', () => __apiReadyResolve())
+window.addEventListener('pywebviewready', () => {
+  __apiReadyResolve()
+  // Wrap API with a logging proxy — traces every call to js_errors.log
+  const _raw = window.pywebview.api
+  window.pywebview.api = new Proxy(_raw, {
+    get(target, method) {
+      const fn = target[method]
+      if (typeof fn !== 'function') return fn
+      // Don't proxy the raw log bypass itself (infinite loop guard)
+      if (method === '__raw_log' || method === 'log_js_error') return fn.bind(target)
+      return (...args) => {
+        const argStr = JSON.stringify(args).slice(0, 300)
+        _raw.__raw_log('debug', `api.call method=${method} args=${argStr}`).catch(() => {})
+        return fn.apply(target, args).then(result => {
+          _raw.__raw_log('debug', `api.result method=${method}`).catch(() => {})
+          return result
+        }).catch(err => {
+          _raw.__raw_log('error', `api.error method=${method} error=${err}`).catch(() => {})
+          throw err
+        })
+      }
+    }
+  })
+})
+
+// Global unhandled error capture — forwards to js_errors.log via Python
+window.onerror = (msg, src, line, col, err) => {
+  const text = `${msg} (${src}:${line}:${col})${err ? ' ' + err.stack : ''}`
+  window.__apiReady.then(() => window.pywebview.api.log_js_error('error', '[onerror] ' + text).catch(() => {}))
+}
+window.addEventListener('unhandledrejection', e => {
+  const text = String(e.reason?.stack || e.reason || e)
+  window.__apiReady.then(() => window.pywebview.api.log_js_error('error', '[unhandledrejection] ' + text).catch(() => {}))
+})
 
 const PAGES = {
   home: HomePage,
@@ -161,6 +194,18 @@ const App = {
       } catch(e) {}
     }
 
+    const dumpState = ref(null) // null | {running:true} | {ok,filename?,error?}
+    const createDump = async () => {
+      dumpState.value = { running: true }
+      try {
+        await window.__apiReady
+        const r = await window.pywebview.api.create_debug_dump()
+        dumpState.value = r
+      } catch(e) {
+        dumpState.value = { ok: false, error: String(e) }
+      }
+    }
+
     const openDebugModal = async () => {
       resetConfirm.value = null
       resetResult.value = {}
@@ -178,7 +223,7 @@ const App = {
       } catch(e) { hostInfo.value = null }
     }
 
-    return { page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate, NAV, PAGES, icon, isUpdatePrompt, UpdatePromptPage, showMenu, showVersionModal, manualUpdateResult, openVersionModal, checkUpdateManual, showDebugModal, hostInfo, resetConfirm, resetResult, confirmReset, openDebugModal, updateStream, streamSaving, setStream, gitlabPat, savePat }
+    return { page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate, NAV, PAGES, icon, isUpdatePrompt, UpdatePromptPage, showMenu, showVersionModal, manualUpdateResult, openVersionModal, checkUpdateManual, showDebugModal, hostInfo, resetConfirm, resetResult, confirmReset, openDebugModal, updateStream, streamSaving, setStream, gitlabPat, savePat, dumpState, createDump }
   },
   template: `
     <template v-if="isUpdatePrompt">
@@ -331,8 +376,16 @@ const App = {
                 <span v-else class="fs-13 text-3">Loading…</span>
               </div>
               <div style="margin-top:10px;padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
-                <div class="fs-13 fw-500 text-0" style="margin-bottom:6px">Upload Debug Data</div>
-                <div class="fs-12 text-3">Collect and share logs with support.</div>
+                <div class="fs-13 fw-500 text-0" style="margin-bottom:6px">Debug Dump</div>
+                <div class="fs-12 text-3" style="margin-bottom:8px">Saves a zip with logs, redacted config, and system info to your Downloads folder.</div>
+                <button class="btn btn-ghost btn-sm" :disabled="dumpState && dumpState.running" @click="createDump">
+                  <span v-html="icon('download', 12)"></span>
+                  {{ dumpState && dumpState.running ? 'Creating…' : 'Save Debug Dump' }}
+                </button>
+                <div v-if="dumpState && !dumpState.running" style="margin-top:6px" :style="dumpState.ok ? 'color:var(--ok)' : 'color:var(--err)'" class="fs-12">
+                  <template v-if="dumpState.ok">Saved: {{ dumpState.filename }} — Downloads folder opened</template>
+                  <template v-else>Error: {{ dumpState.error }}</template>
+                </div>
               </div>
             </div>
 
@@ -381,6 +434,10 @@ const App = {
   `
 }
 
-createApp(App)
-  .component('update-prompt-page', UpdatePromptPage)
-  .mount('#app')
+const app = createApp(App)
+app.config.errorHandler = (err, _instance, info) => {
+  const text = `${info}: ${err?.stack || err}`
+  window.__apiReady.then(() => window.pywebview.api.log_js_error('error', '[vue] ' + text).catch(() => {}))
+  console.error('[vue errorHandler]', err)
+}
+app.component('update-prompt-page', UpdatePromptPage).mount('#app')
