@@ -745,7 +745,7 @@ class Api:
         }.get(str(level).lower(), logging.ERROR)
         js_log.log(lvl, message)
 
-    def __raw_log(self, level: str, message: str) -> None:
+    def _raw_log(self, level: str, message: str) -> None:
         """Direct log bypass used by the JS API proxy — must not be wrapped by the proxy itself."""
         self.log_js_error(level, message)
 

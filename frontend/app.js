@@ -49,15 +49,15 @@ window.addEventListener('pywebviewready', () => {
       const fn = target[method]
       if (typeof fn !== 'function') return fn
       // Don't proxy the raw log bypass itself (infinite loop guard)
-      if (method === '__raw_log' || method === 'log_js_error') return fn.bind(target)
+      if (method === '_raw_log' || method === 'log_js_error') return fn.bind(target)
       return (...args) => {
         const argStr = JSON.stringify(args).slice(0, 300)
-        _raw.__raw_log('debug', `api.call method=${method} args=${argStr}`).catch(() => {})
+        _raw._raw_log('debug', `api.call method=${method} args=${argStr}`).catch(() => {})
         return Promise.resolve(fn.apply(target, args)).then(result => {
-          _raw.__raw_log('debug', `api.result method=${method}`).catch(() => {})
+          _raw._raw_log('debug', `api.result method=${method}`).catch(() => {})
           return result
         }).catch(err => {
-          _raw.__raw_log('error', `api.error method=${method} error=${err}`).catch(() => {})
+          _raw._raw_log('error', `api.error method=${method} error=${err}`).catch(() => {})
           throw err
         })
       }
