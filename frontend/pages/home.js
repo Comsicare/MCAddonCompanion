@@ -105,8 +105,10 @@ export default {
         } else if (event.type === 'archive_done') {
           window.__onProgress = prevHandler
           if (event.ok) {
-            archiveStep.value = 'Done'
             await load()
+            archiving.value = false
+            archiveStep.value = ''
+            archiveConfirm.value = null
             closeSettings()
           } else {
             archiving.value = false
