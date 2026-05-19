@@ -120,7 +120,9 @@ const App = {
           updateInfo.value = info
           try {
             const skipped = await window.pywebview.api.get_skipped_version()
-            if (skipped !== info.version && !updateAutoShown.value) {
+            if (skipped === info.version) {
+              updateDismissed.value = true
+            } else if (!updateAutoShown.value) {
               showUpdateModal.value = true
               updateAutoShown.value = true
             }
