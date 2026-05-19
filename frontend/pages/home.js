@@ -100,8 +100,8 @@ export default {
 
     const doArchive = async (instName, moveOnly) => {
       const stepLabels = moveOnly
-        ? ['Sync files to sync folder', 'Remove instance folder']
-        : ['Sync files to sync folder', 'Create zip backup', 'Remove instance folder']
+        ? ['Reading files…', 'Moving files…', 'Removing instance folder…']
+        : ['Reading files…', 'Copying files…', 'Creating zip archive…', 'Removing instance folder…']
       archiveModal.value = {
         show: true, moveOnly, phase: 'progress', done: false, error: false,
         steps: stepLabels.map((label, i) => ({ label, state: i === 0 ? 'run' : 'wait', pct: i === 0 ? 0 : null, detail: '' })),

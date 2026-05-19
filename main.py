@@ -402,34 +402,41 @@ class Api:
                                  for src in mc_dir.rglob("*") if src.is_file()]
                     to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
                     total = len(to_copy)
-                    self._emit_archive_event({"type": "archive_step", "step": "Syncing files to sync folder…", "pct": 0})
+                    self._emit_archive_event({"type": "archive_step", "step": "Reading files…", "pct": 0})
+                    total_bytes = sum(s.stat().st_size for s, _ in to_copy) or 1
+                    self._emit_archive_event({"type": "archive_step", "step": "Copying files…", "pct": 0})
                     sync_dir.mkdir(parents=True, exist_ok=True)
                     new_manifest = {}
+                    copied_bytes = 0
                     last_pct = 0
-                    for i, (src, rel) in enumerate(to_copy):
+                    for src, rel in to_copy:
                         dest = sync_dir / rel
                         dest.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(str(src), str(dest))
                         stat = _file_stat(dest)
                         new_manifest[rel] = stat
-                        synced_bytes += stat.get("size", 0)
+                        fsize = stat.get("size", 0)
+                        synced_bytes += fsize
+                        copied_bytes += fsize
                         files_copied += 1
-                        pct = int((i + 1) / total * 100) if total else 100
-                        if pct >= last_pct + 5 or pct == 100:
+                        pct = min(99, int(copied_bytes / total_bytes * 100))
+                        if pct >= last_pct + 1 or pct == 99:
                             self._emit_archive_event({"type": "archive_progress", "pct": pct})
                             last_pct = pct
                     write_manifest(sync_dir, new_manifest)
-                self._emit_archive_event({"type": "archive_step", "step": "Creating zip backup…", "pct": 0})
+                self._emit_archive_event({"type": "archive_step", "step": "Creating zip archive…", "pct": 0})
                 zip_name = f"{instance_name}.archive.zip"
                 zip_path = instances_path / zip_name
                 zip_files = [f for f in inst_dir.rglob("*") if f.is_file()]
-                total_zip = len(zip_files)
+                total_zip_bytes = sum(f.stat().st_size for f in zip_files) or 1
+                zipped_bytes = 0
                 last_pct = 0
                 with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for i, f in enumerate(zip_files):
+                    for f in zip_files:
                         zf.write(f, f.relative_to(instances_path))
-                        pct = int((i + 1) / total_zip * 100) if total_zip else 100
-                        if pct >= last_pct + 5 or pct == 100:
+                        zipped_bytes += f.stat().st_size
+                        pct = min(99, int(zipped_bytes / total_zip_bytes * 100))
+                        if pct >= last_pct + 1 or pct == 99:
                             self._emit_archive_event({"type": "archive_progress", "pct": pct})
                             last_pct = pct
                 zip_size_mb = round(zip_path.stat().st_size / 1024 / 1024, 1) if zip_path.exists() else 0
@@ -605,20 +612,25 @@ class Api:
                                  for src in mc_dir.rglob("*") if src.is_file()]
                     to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
                     total = len(to_copy)
-                    self._emit_archive_event({"type": "archive_step", "step": "Syncing files to sync folder…", "pct": 0})
+                    self._emit_archive_event({"type": "archive_step", "step": "Reading files…", "pct": 0})
+                    total_bytes = sum(s.stat().st_size for s, _ in to_copy) or 1
+                    self._emit_archive_event({"type": "archive_step", "step": "Moving files…", "pct": 0})
                     sync_dir.mkdir(parents=True, exist_ok=True)
                     new_manifest = {}
+                    copied_bytes = 0
                     last_pct = 0
-                    for i, (src, rel) in enumerate(to_copy):
+                    for src, rel in to_copy:
                         dest = sync_dir / rel
                         dest.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(str(src), str(dest))
                         stat = _file_stat(dest)
                         new_manifest[rel] = stat
-                        synced_bytes += stat.get("size", 0)
+                        fsize = stat.get("size", 0)
+                        synced_bytes += fsize
+                        copied_bytes += fsize
                         files_copied += 1
-                        pct = int((i + 1) / total * 100) if total else 100
-                        if pct >= last_pct + 5 or pct == 100:
+                        pct = min(99, int(copied_bytes / total_bytes * 100))
+                        if pct >= last_pct + 1 or pct == 99:
                             self._emit_archive_event({"type": "archive_progress", "pct": pct})
                             last_pct = pct
                     write_manifest(sync_dir, new_manifest)
@@ -642,10 +654,7 @@ class Api:
         return {"ok": True, "started": True}
 
     def _emit_archive_event(self, payload: dict) -> None:
-        """Emit an archive progress event to the JS frontend."""
-        import webview
-        for win in webview.windows:
-            win.evaluate_js(f"window.__onProgress && window.__onProgress({__import__('json').dumps(payload)})")
+        self._emit(payload)
 
     def _emit_archive_done(self, ok: bool, error: str | None, logs: list | None = None) -> None:
         payload = {"type": "archive_done", "ok": ok}

@@ -166,8 +166,8 @@ export default {
     const closeArchiveModal = () => { archiveModal.value = _makeArchiveModal() }
 
     const _archiveStepLabels = (moveOnly) => moveOnly
-      ? ['Sync files to sync folder', 'Remove instance folder']
-      : ['Sync files to sync folder', 'Create zip backup', 'Remove instance folder']
+      ? ['Reading files…', 'Moving files…', 'Removing instance folder…']
+      : ['Reading files…', 'Copying files…', 'Creating zip archive…', 'Removing instance folder…']
 
     const _stepFor = (steps, label) => steps.find(s => s.label === label)
 
