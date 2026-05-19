@@ -29,6 +29,7 @@ export function icon(name, size = 16) {
     spin: `<path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 4v5h-5" opacity=".5"/>`,
     play: `<path d="M7 4.5v15l13-7.5L7 4.5Z"/>`,
     archive: `<path d="M3 5h18v4H3z"/><path d="M5 9v10h14V9"/><path d="M10 14h4"/>`,
+    folder: `<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>`,
   }
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || ''}</svg>`
 }

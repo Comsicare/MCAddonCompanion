@@ -498,7 +498,7 @@ export default {
                 <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Prism Instances Path</div>
                 <div style="display:flex;gap:6px">
                   <input v-model="moduleSettingsForm.instances_path" class="input input-mono" style="flex:1;min-width:0" placeholder="C:\Users\…\PrismLauncher\instances">
-                  <button class="btn btn-ghost btn-sm" style="flex:none" @click="pickFolderInto(moduleSettingsForm, 'instances_path')"><span v-html="icon('folder',13)"></span> Browse</button>
+                  <button class="icon-btn" title="Browse" style="flex:none;width:34px;height:34px" @click="pickFolderInto(moduleSettingsForm, 'instances_path')"><span v-html="icon('folder',16)"></span></button>
                 </div>
                 <div class="fs-12 text-3 mt-4">Folder containing all Prism instance subfolders.</div>
               </div>
@@ -506,7 +506,7 @@ export default {
                 <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Sync Folder Path</div>
                 <div style="display:flex;gap:6px">
                   <input v-model="moduleSettingsForm.sync_path" class="input input-mono" style="flex:1;min-width:0" placeholder="C:\Users\…\Nextcloud\Minecraft">
-                  <button class="btn btn-ghost btn-sm" style="flex:none" @click="pickFolderInto(moduleSettingsForm, 'sync_path')"><span v-html="icon('folder',13)"></span> Browse</button>
+                  <button class="icon-btn" title="Browse" style="flex:none;width:34px;height:34px" @click="pickFolderInto(moduleSettingsForm, 'sync_path')"><span v-html="icon('folder',16)"></span></button>
                 </div>
                 <div class="fs-12 text-3 mt-4">Folder where instance files will be synced (e.g. Nextcloud).</div>
               </div>
@@ -539,7 +539,7 @@ export default {
                 <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Prism Instances Path</div>
                 <div style="display:flex;gap:6px">
                   <input v-model="setupForm.instances_path" class="input input-mono" style="flex:1;min-width:0" placeholder="C:\Users\…\PrismLauncher\instances">
-                  <button class="btn btn-ghost btn-sm" style="flex:none" @click="pickFolderInto(setupForm, 'instances_path')"><span v-html="icon('folder',13)"></span> Browse</button>
+                  <button class="icon-btn" title="Browse" style="flex:none;width:34px;height:34px" @click="pickFolderInto(setupForm, 'instances_path')"><span v-html="icon('folder',16)"></span></button>
                 </div>
                 <div class="fs-12 text-3 mt-4">Folder containing all Prism instance subfolders.</div>
               </div>
@@ -547,7 +547,7 @@ export default {
                 <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Sync Folder Path</div>
                 <div style="display:flex;gap:6px">
                   <input v-model="setupForm.sync_path" class="input input-mono" style="flex:1;min-width:0" placeholder="C:\Users\…\Nextcloud\Minecraft">
-                  <button class="btn btn-ghost btn-sm" style="flex:none" @click="pickFolderInto(setupForm, 'sync_path')"><span v-html="icon('folder',13)"></span> Browse</button>
+                  <button class="icon-btn" title="Browse" style="flex:none;width:34px;height:34px" @click="pickFolderInto(setupForm, 'sync_path')"><span v-html="icon('folder',16)"></span></button>
                 </div>
                 <div class="fs-12 text-3 mt-4">Folder where instance files will be synced (e.g. Nextcloud).</div>
               </div>
