@@ -120,7 +120,7 @@ export default {
           exclusions,
         }
       } catch(e) {
-        preflightModal.value = null
+        preflightModal.value = { phase: 'error', instName, moveOnly }
       }
     }
 
@@ -691,7 +691,7 @@ export default {
 
     <!-- Pre-flight modal -->
     <teleport to="body">
-      <div v-if="preflightModal" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999">
+      <div v-if="preflightModal" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:10000">
         <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:500px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column;overflow:hidden">
           <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line);flex:none">
             <span class="fw-600 fs-14">Archive Pre-flight</span>
@@ -700,6 +700,9 @@ export default {
           <div style="padding:20px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:14px">
             <template v-if="preflightModal.phase === 'scanning'">
               <div class="fs-13 text-2">Scanning instance folder...</div>
+            </template>
+            <template v-else-if="preflightModal.phase === 'error'">
+              <div class="fs-13" style="color:var(--err)">Failed to scan instance folder. Please try again.</div>
             </template>
             <template v-else>
               <div style="display:flex;gap:20px">
@@ -756,7 +759,7 @@ export default {
           </div>
           <div style="padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;flex:none">
             <button class="btn btn-ghost btn-sm" @click="closePreflight">Cancel</button>
-            <button class="btn btn-primary btn-sm" :disabled="preflightModal.phase === 'scanning'" @click="startArchiveFromPreflight">
+            <button class="btn btn-primary btn-sm" :disabled="preflightModal.phase === 'scanning' || preflightModal.phase === 'error'" @click="startArchiveFromPreflight">
               Start Archive
             </button>
           </div>
