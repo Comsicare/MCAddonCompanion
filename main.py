@@ -2060,6 +2060,11 @@ def _headless_startup(name: str) -> None:
                                         with zf.open(member) as src, open(dest, "wb") as dst:
                                             dst.write(src.read())
                             add_tracked_pack({**tracked, "installed_version": latest})
+                            from core.state import save_installed_instance, get_installed_instances
+                            existing = next((i for i in get_installed_instances() if i["instance_name"] == name), {})
+                            save_installed_instance({**existing, "instance_name": name, "installed_version": latest,
+                                                     "repo_id": tracked["repo_id"], "pack_name": tracked["pack_name"],
+                                                     "pack_slug": tracked["pack_slug"]})
             except Exception as e:
                 log.warning("Update check failed for %r: %s", name, e)
 
