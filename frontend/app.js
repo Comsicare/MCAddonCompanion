@@ -1,4 +1,4 @@
-import { createApp, ref } from './vue.esm-browser.js'
+import { createApp, ref, watch } from './vue.esm-browser.js'
 import HomePage from './pages/home.js'
 import SchematicSyncPage from './pages/schematic_sync.js'
 import InstanceSyncPage from './pages/instance_sync.js'
@@ -29,6 +29,7 @@ export function icon(name, size = 16) {
     spin: `<path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 4v5h-5" opacity=".5"/>`,
     play: `<path d="M7 4.5v15l13-7.5L7 4.5Z"/>`,
     archive: `<path d="M3 5h18v4H3z"/><path d="M5 9v10h14V9"/><path d="M10 14h4"/>`,
+    folder: `<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>`,
   }
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || ''}</svg>`
 }
@@ -40,7 +41,40 @@ window.__icon = icon
 // Pages should await window.__apiReady before calling window.pywebview.api
 let __apiReadyResolve
 window.__apiReady = new Promise(resolve => { __apiReadyResolve = resolve })
-window.addEventListener('pywebviewready', () => __apiReadyResolve())
+window.addEventListener('pywebviewready', () => {
+  __apiReadyResolve()
+  // Wrap API with a logging proxy — traces every call to js_errors.log
+  const _raw = window.pywebview.api
+  window.pywebview.api = new Proxy(_raw, {
+    get(target, method) {
+      const fn = target[method]
+      if (typeof fn !== 'function') return fn
+      // Don't proxy the raw log bypass itself (infinite loop guard)
+      if (method === 'log_js_error') return fn.bind(target)
+      return (...args) => {
+        const argStr = JSON.stringify(args).slice(0, 300)
+        _raw.log_js_error('debug', `api.call method=${method} args=${argStr}`).catch(() => {})
+        return Promise.resolve(fn.apply(target, args)).then(result => {
+          _raw.log_js_error('debug', `api.result method=${method}`).catch(() => {})
+          return result
+        }).catch(err => {
+          _raw.log_js_error('error', `api.error method=${method} error=${err}`).catch(() => {})
+          throw err
+        })
+      }
+    }
+  })
+})
+
+// Global unhandled error capture — forwards to js_errors.log via Python
+window.onerror = (msg, src, line, col, err) => {
+  const text = `${msg} (${src}:${line}:${col})${err ? ' ' + err.stack : ''}`
+  window.__apiReady.then(() => window.pywebview.api.log_js_error('error', '[onerror] ' + text).catch(() => {}))
+}
+window.addEventListener('unhandledrejection', e => {
+  const text = String(e.reason?.stack || e.reason || e)
+  window.__apiReady.then(() => window.pywebview.api.log_js_error('error', '[unhandledrejection] ' + text).catch(() => {}))
+})
 
 const PAGES = {
   home: HomePage,
@@ -66,65 +100,6 @@ const App = {
     const updateInfo = ref(null)
     const updateDismissed = ref(false)
     const appUpdateState = ref(null)  // null | {state:'downloading'|'installing'|'done'|'error', pct:0-100}
-
-    const showMenu = ref(false)
-    const showVersionModal = ref(false)
-    const checkingUpdate = ref(false)
-    const manualUpdateResult = ref(null) // null | 'ok' | 'none' | 'error'
-
-    const toggleMenu = () => { showMenu.value = !showMenu.value }
-    const closeMenu = () => { showMenu.value = false }
-
-    const openVersionModal = () => {
-      showMenu.value = false
-      manualUpdateResult.value = null
-      showVersionModal.value = true
-    }
-
-    const checkUpdateManual = async () => {
-      checkingUpdate.value = true
-      manualUpdateResult.value = null
-      try {
-        await window.__apiReady
-        const info = await window.pywebview.api.check_update()
-        if (info) {
-          updateInfo.value = info
-          updateDismissed.value = false
-          manualUpdateResult.value = 'ok'
-        } else {
-          manualUpdateResult.value = 'none'
-        }
-      } catch(e) {
-        manualUpdateResult.value = 'error'
-      }
-      checkingUpdate.value = false
-    }
-
-    const showDebugModal = ref(false)
-    const hostInfo = ref(null)
-    const resetConfirm = ref(null)   // null | 'schematic_sync' | 'instance_sync' | 'pack_registry'
-    const resetResult = ref({})      // { [module]: 'ok' | 'error' }
-
-    const openDebugModal = async () => {
-      resetConfirm.value = null
-      resetResult.value = {}
-      showDebugModal.value = true
-      try {
-        await window.__apiReady
-        hostInfo.value = await window.pywebview.api.get_host_info()
-      } catch(e) { hostInfo.value = null }
-    }
-
-    const confirmReset = async (module) => {
-      try {
-        await window.__apiReady
-        const r = await window.pywebview.api.reset_module(module)
-        resetResult.value = { ...resetResult.value, [module]: r.ok ? 'ok' : 'error' }
-      } catch(e) {
-        resetResult.value = { ...resetResult.value, [module]: 'error' }
-      }
-      resetConfirm.value = null
-    }
 
     window.__onProgress = (event) => {
       if (event.type === 'app_update') {
@@ -152,13 +127,112 @@ const App = {
       )
     }
 
-    return {
-      page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate,
-      NAV, PAGES, icon, isUpdatePrompt, UpdatePromptPage,
-      showMenu, toggleMenu, closeMenu,
-      showVersionModal, checkingUpdate, manualUpdateResult, openVersionModal, checkUpdateManual,
-      showDebugModal, hostInfo, resetConfirm, resetResult, openDebugModal, confirmReset,
+    // Menu — close on outside click via document listener (no overlay that blocks menu items)
+    const showMenu = ref(false)
+    const _closeMenu = () => { showMenu.value = false }
+    watch(showMenu, (open) => {
+      if (open) {
+        setTimeout(() => document.addEventListener('click', _closeMenu), 0)
+      } else {
+        document.removeEventListener('click', _closeMenu)
+      }
+    })
+
+    // Version & Updates modal
+    const showVersionModal = ref(false)
+    const manualUpdateResult = ref(null)
+
+    const openVersionModal = async () => {
+      showMenu.value = false
+      manualUpdateResult.value = null
+      showVersionModal.value = true
+      try {
+        await window.__apiReady
+        updateStream.value = await window.pywebview.api.get_update_stream_api()
+      } catch(e) {}
     }
+
+    const checkUpdateManual = async () => {
+      manualUpdateResult.value = { checking: true }
+      try {
+        await window.__apiReady
+        const info = await window.pywebview.api.check_update()
+        manualUpdateResult.value = info ? { update: info } : { upToDate: true }
+        if (info) updateInfo.value = info
+      } catch(e) {
+        manualUpdateResult.value = { error: String(e) }
+      }
+    }
+
+    // Help & Debug modal
+    const showDebugModal = ref(false)
+    const hostInfo = ref(null)
+    const resetConfirm = ref(null)
+    const resetResult = ref({})
+
+    const confirmReset = async (module) => {
+      try {
+        await window.__apiReady
+        const r = await window.pywebview.api.reset_module(module)
+        resetResult.value = { ...resetResult.value, [module]: r.ok ? 'ok' : 'error' }
+      } catch(e) {
+        resetResult.value = { ...resetResult.value, [module]: 'error' }
+      }
+      resetConfirm.value = null
+    }
+
+    const updateStream = ref('alpha')
+    const streamSaving = ref(false)
+
+    const setStream = async (stream) => {
+      streamSaving.value = true
+      try {
+        await window.__apiReady
+        await window.pywebview.api.set_update_stream_api(stream)
+        updateStream.value = stream
+        manualUpdateResult.value = null
+      } catch(e) {}
+      streamSaving.value = false
+    }
+
+    const gitlabPat = ref('')
+    const savePat = async () => {
+      try {
+        await window.__apiReady
+        await window.pywebview.api.set_gitlab_pat_api(gitlabPat.value)
+      } catch(e) {}
+    }
+
+    const dumpState = ref(null) // null | {running:true} | {ok,filename?,error?}
+    const createDump = async () => {
+      dumpState.value = { running: true }
+      try {
+        await window.__apiReady
+        const r = await window.pywebview.api.create_debug_dump()
+        dumpState.value = r
+      } catch(e) {
+        dumpState.value = { ok: false, error: String(e) }
+      }
+    }
+
+    const openDebugModal = async () => {
+      resetConfirm.value = null
+      resetResult.value = {}
+      showDebugModal.value = true
+      try {
+        await window.__apiReady
+        const [info, stream, pat] = await Promise.all([
+          window.pywebview.api.get_host_info(),
+          window.pywebview.api.get_update_stream_api(),
+          window.pywebview.api.get_gitlab_pat_api(),
+        ])
+        hostInfo.value = info
+        updateStream.value = stream
+        gitlabPat.value = pat
+      } catch(e) { hostInfo.value = null }
+    }
+
+    return { page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate, NAV, PAGES, icon, isUpdatePrompt, UpdatePromptPage, showMenu, showVersionModal, manualUpdateResult, openVersionModal, checkUpdateManual, showDebugModal, hostInfo, resetConfirm, resetResult, confirmReset, openDebugModal, updateStream, streamSaving, setStream, gitlabPat, savePat, dumpState, createDump }
   },
   template: `
     <template v-if="isUpdatePrompt">
@@ -205,21 +279,16 @@ const App = {
               </button>
             </div>
           </template>
-          <div class="dropdown-wrap" v-click-outside="closeMenu">
-            <button class="icon-btn" :class="{ active: showMenu }" title="Menu" @click="toggleMenu">
+          <div style="position:relative">
+            <button class="icon-btn" title="Menu" @click.stop="showMenu = !showMenu">
               <span v-html="icon('dots', 15)"></span>
             </button>
-            <div v-if="showMenu" class="dropdown-panel">
-              <!-- TODO: replace with dedicated Settings page once built -->
-              <button class="dropdown-item" disabled style="opacity:.45;cursor:not-allowed" title="Coming soon">
-                <span v-html="icon('settings', 14)"></span> Settings <span class="fs-11 text-3" style="margin-left:auto">soon</span>
-              </button>
-              <div class="dropdown-sep"></div>
-              <button class="dropdown-item" @click="openVersionModal">
+            <div v-if="showMenu" style="position:absolute;right:0;top:calc(100% + 6px);background:var(--bg-1);border:1px solid var(--line);border-radius:8px;padding:4px;min-width:180px;z-index:9998;box-shadow:0 4px 16px rgba(0,0,0,.3)">
+              <button class="menu-item" style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;background:none;border:none;color:var(--text-0);cursor:pointer;border-radius:5px;font-size:13px;text-align:left" @click.stop="openVersionModal">
                 <span v-html="icon('bell', 14)"></span> Version &amp; Updates
               </button>
-              <button class="dropdown-item" @click="openDebugModal(); closeMenu()">
-                <span v-html="icon('alert', 14)"></span> Help &amp; Debug
+              <button class="menu-item" style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;background:none;border:none;color:var(--text-0);cursor:pointer;border-radius:5px;font-size:13px;text-align:left" @click.stop="openDebugModal">
+                <span v-html="icon('settings', 14)"></span> Help &amp; Debug
               </button>
             </div>
           </div>
@@ -229,119 +298,6 @@ const App = {
       <div class="app-content">
         <component :is="PAGES[page]" :progress="progress" @navigate="page = $event" />
       </div>
-
-      <!-- Version & Updates modal -->
-      <teleport to="body">
-        <div v-if="showVersionModal"
-          style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px"
-          @mousedown.self="showVersionModal = false">
-          <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:420px;overflow:hidden">
-            <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
-              <div class="fw-600 text-0" style="font-size:15px">Version &amp; Updates</div>
-              <button class="icon-btn" @click="showVersionModal = false"><span v-html="icon('x',13)"></span></button>
-            </div>
-            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:16px">
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <span class="text-2 fs-13">Current version</span>
-                <span class="mono fw-600 text-0">{{ version ? 'v' + version : '—' }}</span>
-              </div>
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <span class="text-2 fs-13">Status</span>
-                <span v-if="updateInfo && !updateDismissed" class="pill pill-warn">Update available — v{{ updateInfo.version }}</span>
-                <span v-else-if="manualUpdateResult === 'none'" class="pill pill-ok">Up to date</span>
-                <span v-else class="pill pill-off">—</span>
-              </div>
-              <template v-if="updateInfo && !updateDismissed">
-                <button class="btn btn-primary btn-sm flex items-center gap-6"
-                  :disabled="!!appUpdateState"
-                  @click="startUpdate">
-                  <span v-if="appUpdateState && appUpdateState.state==='downloading'" v-html="icon('spin',13)"></span>
-                  <span v-else v-html="icon('download',13)"></span>
-                  {{ appUpdateState ? (appUpdateState.state === 'downloading' ? appUpdateState.pct + '%' : appUpdateState.state) : 'Install update' }}
-                </button>
-              </template>
-              <div style="border-top:1px solid var(--line);padding-top:16px;display:flex;justify-content:flex-end">
-                <button class="btn btn-ghost btn-sm flex items-center gap-6"
-                  :disabled="checkingUpdate"
-                  @click="checkUpdateManual">
-                  <span v-if="checkingUpdate" v-html="icon('spin',13)"></span>
-                  <span v-else v-html="icon('refresh',13)"></span>
-                  {{ checkingUpdate ? 'Checking…' : 'Check for updates' }}
-                </button>
-              </div>
-              <div v-if="manualUpdateResult === 'error'" class="fs-12" style="color:var(--err)">Check failed — verify your connection.</div>
-            </div>
-          </div>
-        </div>
-      </teleport>
-
-      <!-- Help & Debug modal -->
-      <teleport to="body">
-        <div v-if="showDebugModal"
-          style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px"
-          @mousedown.self="showDebugModal = false">
-          <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden">
-
-            <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex:none">
-              <div class="fw-600 text-0" style="font-size:15px">Help &amp; Debug</div>
-              <button class="icon-btn" @click="showDebugModal = false"><span v-html="icon('x',13)"></span></button>
-            </div>
-
-            <div style="overflow-y:auto;flex:1;padding:20px 24px;display:flex;flex-direction:column;gap:20px">
-
-              <!-- Host info -->
-              <div>
-                <div class="kicker" style="margin-bottom:10px">Host Information</div>
-                <div v-if="hostInfo" style="display:flex;flex-direction:column;gap:6px">
-                  <div v-for="(val, key) in hostInfo" :key="key"
-                    style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)">
-                    <span class="fs-12 text-2">{{ key }}</span>
-                    <span class="mono fs-12 text-0" style="max-width:60%;text-align:right;word-break:break-all">{{ val }}</span>
-                  </div>
-                </div>
-                <div v-else class="fs-13 text-3">Loading…</div>
-              </div>
-
-              <!-- Module resets -->
-              <div>
-                <div class="kicker" style="margin-bottom:10px">Reset Module Data</div>
-                <div style="display:flex;flex-direction:column;gap:8px">
-                  <template v-for="mod in ['schematic_sync','instance_sync','pack_registry']" :key="mod">
-                    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
-                      <div>
-                        <div class="fs-13 fw-500 text-0">{{ mod.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) }}</div>
-                        <div v-if="resetResult[mod] === 'ok'" class="fs-12" style="color:var(--ok)">Reset complete</div>
-                        <div v-else-if="resetResult[mod] === 'error'" class="fs-12" style="color:var(--err)">Reset failed</div>
-                      </div>
-                      <template v-if="resetConfirm === mod">
-                        <div class="flex items-center gap-6">
-                          <span class="fs-12 text-2">Sure?</span>
-                          <button class="btn btn-sm" style="background:var(--err);border-color:var(--err);color:#fff;font-size:11px" @click="confirmReset(mod)">Yes, reset</button>
-                          <button class="btn btn-ghost btn-sm" style="font-size:11px" @click="resetConfirm = null">Cancel</button>
-                        </div>
-                      </template>
-                      <button v-else class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--err);border-color:var(--err)" @click="resetConfirm = mod">Reset</button>
-                    </div>
-                  </template>
-                </div>
-              </div>
-
-              <!-- Debug upload (coming soon) -->
-              <div>
-                <div class="kicker" style="margin-bottom:10px">Diagnostics</div>
-                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
-                  <div>
-                    <div class="fs-13 fw-500 text-0">Upload Debug Data</div>
-                    <div class="fs-12 text-3">Logs and diagnostics — coming soon</div>
-                  </div>
-                  <button class="btn btn-ghost btn-sm" style="font-size:11px" disabled title="Coming soon">Upload</button>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        </div>
-      </teleport>
 
       <footer class="footer">
         <div class="flex items-center gap-14">
@@ -357,21 +313,138 @@ const App = {
         </div>
       </footer>
     </div>
+
+    <!-- Version & Updates modal -->
+    <teleport to="body">
+      <div v-if="showVersionModal" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:300" @click.self="showVersionModal = false">
+        <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:420px;max-width:95vw;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line)">
+            <span class="fw-600 fs-14">Version &amp; Updates</span>
+            <button class="icon-btn" @click="showVersionModal = false"><span v-html="icon('x', 14)"></span></button>
+          </div>
+          <div style="padding:20px;display:flex;flex-direction:column;gap:12px">
+            <div class="kicker" style="margin-bottom:2px">App Info</div>
+            <div style="padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line);display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span class="text-2 fs-13">Version</span>
+                <span class="mono fs-13">{{ version ? 'v' + version : '—' }}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span class="text-2 fs-13">Status</span>
+                <span class="fs-13" :style="updateInfo && !updateDismissed ? 'color:var(--accent)' : 'color:var(--text-ok,#4ade80)'">
+                  {{ updateInfo && !updateDismissed ? 'Update available: v' + updateInfo.version : 'Up to date' }}
+                </span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span class="text-2 fs-13">Update stream</span>
+                <div class="sub-tabs" style="font-size:11px">
+                  <button v-for="s in ['release','beta','alpha','dev']" :key="s"
+                    class="sub-tab" :class="{ active: updateStream === s }"
+                    :disabled="streamSaving"
+                    @click="setStream(s)"
+                    style="padding:3px 10px;font-size:11px;text-transform:capitalize">
+                    {{ s }}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <button class="btn btn-ghost btn-sm" style="align-self:flex-start" @click="checkUpdateManual">
+              <span v-html="icon('refresh', 13)"></span> Check for updates
+            </button>
+            <div v-if="manualUpdateResult" class="fs-12" style="padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
+              <template v-if="manualUpdateResult.checking">Checking…</template>
+              <template v-else-if="manualUpdateResult.upToDate">You are on the latest version.</template>
+              <template v-else-if="manualUpdateResult.update">Update available: v{{ manualUpdateResult.update.version }}</template>
+              <template v-else-if="manualUpdateResult.error">Error: {{ manualUpdateResult.error }}</template>
+            </div>
+          </div>
+        </div>
+      </div>
+    </teleport>
+
+    <!-- Help & Debug modal -->
+    <teleport to="body">
+      <div v-if="showDebugModal" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:300" @click.self="showDebugModal = false">
+        <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:560px;max-width:95vw;max-height:85vh;overflow-y:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg-1);z-index:1">
+            <span class="fw-600 fs-14">Help &amp; Debug</span>
+            <button class="icon-btn" @click="showDebugModal = false"><span v-html="icon('x', 14)"></span></button>
+          </div>
+          <div style="padding:20px;display:flex;flex-direction:column;gap:16px">
+            <div>
+              <div class="kicker" style="margin-bottom:10px">Diagnostics</div>
+              <div style="padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line);display:flex;flex-direction:column;gap:6px">
+                <template v-if="hostInfo">
+                  <div v-for="(val, key) in hostInfo" :key="key" style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+                    <span class="text-2 fs-13" style="flex:none">{{ key }}</span>
+                    <span class="mono fs-12 text-0" style="word-break:break-all;text-align:right">{{ val }}</span>
+                  </div>
+                </template>
+                <span v-else class="fs-13 text-3">Loading…</span>
+              </div>
+              <div style="margin-top:10px;padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
+                <div class="fs-13 fw-500 text-0" style="margin-bottom:6px">Debug Dump</div>
+                <div class="fs-12 text-3" style="margin-bottom:8px">Saves a zip with logs, redacted config, and system info to your Downloads folder.</div>
+                <button class="btn btn-ghost btn-sm" :disabled="dumpState && dumpState.running" @click="createDump">
+                  <span v-html="icon('download', 12)"></span>
+                  {{ dumpState && dumpState.running ? 'Creating…' : 'Save Debug Dump' }}
+                </button>
+                <div v-if="dumpState && !dumpState.running" style="margin-top:6px" :style="dumpState.ok ? 'color:var(--ok)' : 'color:var(--err)'" class="fs-12">
+                  <template v-if="dumpState.ok">Saved: {{ dumpState.filename }} — Downloads folder opened</template>
+                  <template v-else>Error: {{ dumpState.error }}</template>
+                </div>
+              </div>
+            </div>
+
+            <!-- Dev stream PAT (only shown when stream is 'dev') -->
+            <div v-if="updateStream === 'dev'">
+              <div class="kicker" style="margin-bottom:10px">Dev Stream Access</div>
+              <div style="padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
+                <div class="fs-13 fw-500 text-0" style="margin-bottom:6px">GitLab Dev Token</div>
+                <input
+                  v-model="gitlabPat"
+                  type="password"
+                  class="input input-mono"
+                  placeholder="glpat-…"
+                  style="font-size:12px"
+                  @blur="savePat">
+                <div class="fs-12 text-3" style="margin-top:6px">Required to download builds from private GitLab CI. Only relevant on Dev stream.</div>
+              </div>
+            </div>
+
+            <div>
+              <div class="kicker" style="margin-bottom:10px">Reset Module Data</div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <template v-for="mod in ['schematic_sync','instance_sync','pack_registry']" :key="mod">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-2);border-radius:6px;border:1px solid var(--line)">
+                    <div>
+                      <div class="fs-13 fw-500 text-0">{{ {'schematic_sync':'Schematic Sync','instance_sync':'Instance Sync','pack_registry':'Pack Registry'}[mod] }}</div>
+                      <div v-if="resetResult[mod] === 'ok'" class="fs-12" style="color:var(--ok)">Reset complete</div>
+                      <div v-else-if="resetResult[mod] === 'error'" class="fs-12" style="color:var(--err)">Reset failed</div>
+                    </div>
+                    <template v-if="resetConfirm === mod">
+                      <div class="flex items-center gap-6">
+                        <span class="fs-12 text-2">Sure?</span>
+                        <button class="btn btn-sm" style="background:var(--err);border-color:var(--err);color:#fff;font-size:11px" @click="confirmReset(mod)">Yes, reset</button>
+                        <button class="btn btn-ghost btn-sm" style="font-size:11px" @click="resetConfirm = null">Cancel</button>
+                      </div>
+                    </template>
+                    <button v-else class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--err);border-color:var(--err)" @click="resetConfirm = mod">Reset</button>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </teleport>
   `
 }
 
 const app = createApp(App)
-  .component('update-prompt-page', UpdatePromptPage)
-
-app.directive('click-outside', {
-  mounted(el, binding) {
-    el.__clickOutside = (e) => { if (!el.contains(e.target)) binding.value(e) }
-    document.addEventListener('mousedown', el.__clickOutside)
-  },
-  unmounted(el) {
-    document.removeEventListener('mousedown', el.__clickOutside)
-    delete el.__clickOutside
-  },
-})
-
-app.mount('#app')
+app.config.errorHandler = (err, _instance, info) => {
+  const text = `${info}: ${err?.stack || err}`
+  window.__apiReady.then(() => window.pywebview.api.log_js_error('error', '[vue] ' + text).catch(() => {}))
+  console.error('[vue errorHandler]', err)
+}
+app.component('update-prompt-page', UpdatePromptPage).mount('#app')

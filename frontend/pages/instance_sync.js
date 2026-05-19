@@ -1,8 +1,10 @@
 import { ref, onMounted, computed } from '../vue.esm-browser.js'
+import ActionModal from '../components/action-modal.js'
 
 export default {
   props: ['progress'],
   emits: ['navigate'],
+  components: { ActionModal },
   setup() {
     const data = ref(null)
     const loading = ref(true)
@@ -60,6 +62,66 @@ export default {
       setupSaving.value = false
     }
 
+    // Module settings modal (replaces setup wizard entry points)
+    const showModuleSettings = ref(false)
+    const moduleSettingsForm = ref({ instances_path: '', sync_path: '' })
+    const moduleSettingsSaving = ref(false)
+    const moduleSettingsError = ref(null)
+
+    const openModuleSettings = () => {
+      moduleSettingsForm.value = {
+        instances_path: data.value?.instances_path || '',
+        sync_path: data.value?.sync_path || '',
+      }
+      moduleSettingsError.value = null
+      showModuleSettings.value = true
+    }
+
+    const saveModuleSettings = async () => {
+      if (!moduleSettingsForm.value.instances_path || !moduleSettingsForm.value.sync_path) {
+        moduleSettingsError.value = 'Both paths are required.'
+        return
+      }
+      moduleSettingsSaving.value = true
+      moduleSettingsError.value = null
+      try {
+        await window.__apiReady
+        await window.pywebview.api.setup_instance_sync(
+          moduleSettingsForm.value.instances_path,
+          moduleSettingsForm.value.sync_path,
+        )
+        showModuleSettings.value = false
+        await load()
+      } catch(e) {
+        moduleSettingsError.value = String(e)
+      }
+      moduleSettingsSaving.value = false
+    }
+
+    const resetModuleSync = async () => {
+      try {
+        await window.__apiReady
+        await window.pywebview.api.reset_module('instance_sync')
+        showModuleSettings.value = false
+        await load()
+      } catch(e) {}
+    }
+
+    // Date formatter and error expansion
+    const fmtDate = (iso) => {
+      if (!iso) return '—'
+      const d = new Date(iso)
+      const diff = Date.now() - d.getTime()
+      const mins = Math.floor(diff / 60000)
+      if (mins < 1) return 'just now'
+      if (mins < 60) return `${mins}m ago`
+      const hrs = Math.floor(mins / 60)
+      if (hrs < 24) return `${hrs}h ago`
+      return `${Math.floor(hrs / 24)}d ago`
+    }
+
+    const expandedError = ref(null)
+
     onMounted(load)
 
     const filtered = computed(() => {
@@ -85,39 +147,90 @@ export default {
       } catch(e) {}
     }
 
-    // ── Archive / Restore ────────────────────────────────────────────────────
-    const archiveQueue = ref([])       // names queued or in progress
-    const archivingNow = ref(null)     // name currently being archived
-    const archiveResults = ref({})     // {name: {ok, error}} — shown as inline status
-    let _archiveRunning = false
+    // ── Instance gear modal ──────────────────────────────────────────────────
+    const _makeArchiveModal = () => ({
+      show: false, instance: null, moveOnly: false,
+      phase: 'summary', done: false, error: false,
+      steps: [], logs: [],
+    })
+    const archiveModal = ref(_makeArchiveModal())
+    const archiveConfirm = ref(null) // 'archive' | 'move_only' | null
 
-    const _processArchiveQueue = async () => {
-      if (_archiveRunning) return
-      _archiveRunning = true
-      while (archiveQueue.value.length) {
-        const instName = archiveQueue.value[0]
-        archivingNow.value = instName
-        try {
-          await window.__apiReady
-          const result = await window.pywebview.api.archive_instance(instName)
-          archiveResults.value[instName] = result.ok
-            ? { ok: true, msg: 'Archived successfully' }
-            : { ok: false, msg: result.error || 'Archive failed' }
-          if (result.ok) await load()
-        } catch(e) {
-          archiveResults.value[instName] = { ok: false, msg: String(e) }
-        }
-        archiveQueue.value.shift()
-        archivingNow.value = null
+    const openArchiveModal = (instName, moveOnly) => {
+      archiveConfirm.value = null
+      archiveModal.value = {
+        show: true, instance: instName, moveOnly,
+        phase: 'summary', done: false, error: false,
+        steps: [], logs: [],
       }
-      _archiveRunning = false
     }
 
-    const archiveInstance = (instName) => {
-      if (archiveQueue.value.includes(instName)) return
-      delete archiveResults.value[instName]
-      archiveQueue.value.push(instName)
-      _processArchiveQueue()
+    const closeArchiveModal = () => { archiveModal.value = _makeArchiveModal() }
+
+    const _archiveStepLabels = (moveOnly) => moveOnly
+      ? ['Reading files…', 'Moving files…', 'Removing instance folder…']
+      : ['Reading files…', 'Copying files…', 'Creating zip archive…', 'Removing instance folder…']
+
+    const _stepFor = (steps, label) => steps.find(s => s.label === label)
+
+    const confirmArchive = async () => {
+      const { instance, moveOnly } = archiveModal.value
+      const stepLabels = _archiveStepLabels(moveOnly)
+      archiveModal.value.steps = stepLabels.map((label, i) => ({ label, state: i === 0 ? 'run' : 'wait', pct: i === 0 ? 0 : null, detail: '' }))
+      archiveModal.value.phase = 'progress'
+
+      const prevHandler = window.__onProgress
+      window.__onProgress = async (event) => {
+        if (event.type === 'archive_progress') {
+          const running = archiveModal.value.steps.find(s => s.state === 'run')
+          if (running) running.pct = event.pct
+        } else if (event.type === 'archive_step') {
+          if (event.prev_log != null) archiveModal.value.logs = [...archiveModal.value.logs, event.prev_log]
+          const steps = archiveModal.value.steps
+          const runIdx = steps.findIndex(s => s.state === 'run')
+          if (runIdx >= 0) { steps[runIdx].state = 'done'; steps[runIdx].pct = null }
+          const next = steps.find(s => s.state === 'wait')
+          if (next) { next.state = 'run'; next.pct = event.pct ?? 0 }
+        } else if (event.type === 'archive_done') {
+          window.__onProgress = prevHandler
+          const steps = archiveModal.value.steps
+          if (event.ok) {
+            steps.forEach(s => { if (s.state !== 'done') s.state = 'done' })
+            archiveModal.value.error = false
+            if (event.logs) archiveModal.value.logs = [...archiveModal.value.logs, ...event.logs]
+            archiveModal.value.done = true
+            load()
+          } else {
+            const running = steps.find(s => s.state === 'run')
+            if (running) running.state = 'err'
+            archiveModal.value.logs = [event.error || 'Archive failed']
+            archiveModal.value.done = true
+            archiveModal.value.error = true
+          }
+        } else if (prevHandler) {
+          prevHandler(event)
+        }
+      }
+
+      // Start first step running
+      if (archiveModal.value.steps.length) archiveModal.value.steps[0].state = 'run'
+
+      try {
+        await window.__apiReady
+        const method = moveOnly ? 'archive_instance_move_only' : 'archive_instance'
+        const r = await window.pywebview.api[method](instance)
+        if (!r.ok && !r.started) {
+          window.__onProgress = prevHandler
+          archiveModal.value.logs = [r.error || 'Archive failed']
+          archiveModal.value.done = true
+          archiveModal.value.error = true
+        }
+      } catch(e) {
+        window.__onProgress = prevHandler
+        archiveModal.value.logs = [String(e)]
+        archiveModal.value.done = true
+        archiveModal.value.error = true
+      }
     }
 
     const showRestoreModal = ref(false)
@@ -162,20 +275,36 @@ export default {
       restoreResult.value = null
     }
 
+    const pickFolderInto = async (target, field) => {
+      try {
+        await window.__apiReady
+        const result = await window.pywebview.api.pick_folder()
+        if (result) target[field] = result
+      } catch(e) {}
+    }
+
     return {
       data, loading, error, query, filtered, icon, abbr, load, toggleDefault, toggleOverride,
       showSetup, setupForm, setupSaving, setupError, openSetup, saveSetup,
-      archiveQueue, archivingNow, archiveResults, archiveInstance,
+      archiveModal, archiveConfirm, openArchiveModal, closeArchiveModal, confirmArchive,
       showRestoreModal, archivedList, selectedArchive, restoring, restoreResult,
       openRestoreModal, doRestore, deleteZip, closeRestoreModal,
+      showModuleSettings, moduleSettingsForm, moduleSettingsSaving, moduleSettingsError,
+      openModuleSettings, saveModuleSettings, resetModuleSync,
+      fmtDate, expandedError, pickFolderInto,
     }
   },
   template: `
     <main class="page-wrap">
       <div class="page-header">
-        <div>
-          <div class="kicker">Sync</div>
-          <h1>Instance Sync</h1>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div>
+            <div class="kicker">Sync</div>
+            <h1>Instance Sync</h1>
+          </div>
+          <button class="icon-btn" title="Instance Sync Settings" @click="openModuleSettings" style="margin-top:4px">
+            <span v-html="icon('settings',15)"></span>
+          </button>
         </div>
         <div class="flex items-center gap-10">
           <button class="btn btn-ghost btn-sm flex items-center gap-6" @click="openRestoreModal">
@@ -195,7 +324,7 @@ export default {
           <div class="card-body" style="text-align:center;padding:56px 48px;display:flex;flex-direction:column;align-items:center;gap:16px">
             <div class="fw-500 text-0 fs-14">Instance sync is not configured.</div>
             <div class="text-3 fs-13">Set the Prism instances folder and a sync folder to enable launch/exit hooks.</div>
-            <button class="btn btn-primary btn-sm" @click="openSetup">Setup Instance Sync</button>
+            <button class="btn btn-primary btn-sm" @click="openModuleSettings">Setup Instance Sync</button>
           </div>
         </div>
       </template>
@@ -254,14 +383,7 @@ export default {
               </div>
             </div>
           </div>
-          <!-- Archive queue banner -->
-          <div v-if="archiveQueue.length" style="padding:10px 16px;background:var(--accent-soft);border-bottom:1px solid var(--accent-line);display:flex;align-items:center;gap:10px">
-            <span :class="'spin'" v-html="icon('spin',13)" style="color:var(--accent)"></span>
-            <span class="fs-13" style="color:var(--accent)">
-              <strong>{{ archivingNow }}</strong> archiving…
-              <span v-if="archiveQueue.length > 1" class="text-2"> · {{ archiveQueue.length - 1 }} more queued</span>
-            </span>
-          </div>
+
           <div style="overflow-x:auto">
             <table class="data-table">
               <thead>
@@ -276,7 +398,8 @@ export default {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="inst in filtered" :key="inst.name">
+                <template v-for="inst in filtered" :key="inst.name">
+                <tr>
                   <td>
                     <div class="flex items-center gap-10">
                       <div class="inst-avatar">{{ abbr(inst.name) }}</div>
@@ -300,35 +423,30 @@ export default {
                       </div>
                     </div>
                   </td>
-                  <td><span class="mono fs-12 text-2">—</span></td>
-                  <td><span class="mono fs-12 text-2">—</span></td>
-                  <td style="text-align:right"><span class="mono fs-12 text-2">—</span></td>
+                  <td>
+                    <span class="mono fs-12 text-2" :title="inst.last_exit_sync || ''">{{ fmtDate(inst.last_exit_sync) }}</span>
+                    <span v-if="inst.last_errors?.length" style="margin-left:6px;cursor:pointer;color:var(--warn)"
+                      :title="inst.last_errors.join(' | ')"
+                      @click="expandedError = expandedError === inst.name ? null : inst.name">⚠</span>
+                  </td>
+                  <td>
+                    <span class="mono fs-12 text-2" :title="inst.last_startup_sync || ''">{{ fmtDate(inst.last_startup_sync) }}</span>
+                  </td>
                   <td style="text-align:right">
-                    <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
-                      <!-- Inline archive result -->
-                      <span v-if="archiveResults[inst.name]"
-                        :style="archiveResults[inst.name].ok ? 'color:var(--ok)' : 'color:var(--err)'"
-                        class="fs-11">
-                        {{ archiveResults[inst.name].msg }}
-                        <button @click="delete archiveResults[inst.name]"
-                          style="background:none;border:none;cursor:pointer;color:inherit;margin-left:4px;opacity:.7">✕</button>
-                      </span>
-                      <!-- Queue position badge -->
-                      <span v-if="archiveQueue.includes(inst.name) && archivingNow !== inst.name"
-                        class="tag text-3 fs-11">
-                        #{{ archiveQueue.indexOf(inst.name) + 1 }} queued
-                      </span>
-                      <button class="btn btn-ghost btn-sm flex items-center gap-4"
-                        style="font-size:11px;color:var(--text-2)"
-                        :disabled="archiveQueue.includes(inst.name)"
-                        @click="archiveInstance(inst.name)"
-                        title="Sync, zip, and remove from Prism">
-                        <span :class="archivingNow === inst.name ? 'spin' : ''" v-html="icon('archive',12)"></span>
-                        {{ archivingNow === inst.name ? 'Archiving…' : 'Archive' }}
-                      </button>
-                    </div>
+                    <span class="mono fs-12 text-2">{{ inst.synced_size_mb ? inst.synced_size_mb + ' MB' : '—' }}</span>
+                  </td>
+                  <td style="text-align:right">
+                    <button class="icon-btn" title="Instance actions" @click.stop="openArchiveModal(inst.name, false)">
+                      <span v-html="icon('settings', 14)"></span>
+                    </button>
                   </td>
                 </tr>
+                <tr v-if="expandedError === inst.name && inst.last_errors?.length">
+                  <td colspan="7" style="padding:8px 16px;background:var(--err-soft)">
+                    <div v-for="e in inst.last_errors" :key="e" class="fs-12" style="color:var(--err)">{{ e }}</div>
+                  </td>
+                </tr>
+                </template>
                 <tr v-if="!filtered.length">
                   <td colspan="7" class="loading">No instances found</td>
                 </tr>
@@ -391,6 +509,48 @@ export default {
         </div>
       </teleport>
 
+      <!-- Module settings modal -->
+      <teleport to="body">
+        <div v-if="showModuleSettings"
+          style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px"
+          @mousedown.self="showModuleSettings = false">
+          <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:520px;overflow:hidden">
+            <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
+              <div class="fw-600 text-0" style="font-size:15px">Instance Sync Settings</div>
+              <button class="icon-btn" @click="showModuleSettings = false"><span v-html="icon('x',13)"></span></button>
+            </div>
+            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+              <div>
+                <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Prism Instances Path</div>
+                <div style="display:flex;gap:6px">
+                  <input v-model="moduleSettingsForm.instances_path" class="input input-mono" style="flex:1;min-width:0" placeholder="C:\Users\…\PrismLauncher\instances">
+                  <button class="icon-btn" title="Browse" style="flex:none;width:34px;height:34px" @click="pickFolderInto(moduleSettingsForm, 'instances_path')"><span v-html="icon('folder',16)"></span></button>
+                </div>
+                <div class="fs-12 text-3 mt-4">Folder containing all Prism instance subfolders.</div>
+              </div>
+              <div>
+                <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Sync Folder Path</div>
+                <div style="display:flex;gap:6px">
+                  <input v-model="moduleSettingsForm.sync_path" class="input input-mono" style="flex:1;min-width:0" placeholder="C:\Users\…\Nextcloud\Minecraft">
+                  <button class="icon-btn" title="Browse" style="flex:none;width:34px;height:34px" @click="pickFolderInto(moduleSettingsForm, 'sync_path')"><span v-html="icon('folder',16)"></span></button>
+                </div>
+                <div class="fs-12 text-3 mt-4">Folder where instance files will be synced (e.g. Nextcloud).</div>
+              </div>
+              <div v-if="moduleSettingsError" style="padding:8px 12px;border-radius:6px;background:var(--err-soft);color:var(--err);font-size:12px">{{ moduleSettingsError }}</div>
+            </div>
+            <div style="padding:16px 24px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
+              <button class="ghost-link" style="color:var(--err);font-size:12px" @click="resetModuleSync">Reset sync config</button>
+              <div class="flex items-center gap-8">
+                <button class="btn btn-ghost btn-sm" @click="showModuleSettings = false">Cancel</button>
+                <button class="btn btn-primary btn-sm" :disabled="moduleSettingsSaving" @click="saveModuleSettings">
+                  {{ moduleSettingsSaving ? 'Saving…' : 'Save' }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </teleport>
+
       <!-- Setup wizard modal — outside v-if/v-else chain so it doesn't break Vue's sibling check -->
       <teleport to="body">
         <div v-if="showSetup"
@@ -403,12 +563,18 @@ export default {
             <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
               <div>
                 <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Prism Instances Path</div>
-                <input v-model="setupForm.instances_path" class="input input-mono" placeholder="C:\Users\…\PrismLauncher\instances">
+                <div style="display:flex;gap:6px">
+                  <input v-model="setupForm.instances_path" class="input input-mono" style="flex:1;min-width:0" placeholder="C:\Users\…\PrismLauncher\instances">
+                  <button class="icon-btn" title="Browse" style="flex:none;width:34px;height:34px" @click="pickFolderInto(setupForm, 'instances_path')"><span v-html="icon('folder',16)"></span></button>
+                </div>
                 <div class="fs-12 text-3 mt-4">Folder containing all Prism instance subfolders.</div>
               </div>
               <div>
                 <div class="fs-12 text-2 fw-500" style="margin-bottom:6px">Sync Folder Path</div>
-                <input v-model="setupForm.sync_path" class="input input-mono" placeholder="C:\Users\…\Nextcloud\Minecraft">
+                <div style="display:flex;gap:6px">
+                  <input v-model="setupForm.sync_path" class="input input-mono" style="flex:1;min-width:0" placeholder="C:\Users\…\Nextcloud\Minecraft">
+                  <button class="icon-btn" title="Browse" style="flex:none;width:34px;height:34px" @click="pickFolderInto(setupForm, 'sync_path')"><span v-html="icon('folder',16)"></span></button>
+                </div>
                 <div class="fs-12 text-3 mt-4">Folder where instance files will be synced (e.g. Nextcloud).</div>
               </div>
               <div v-if="setupError" style="padding:8px 12px;border-radius:6px;background:var(--err-soft);color:var(--err);font-size:12px">{{ setupError }}</div>
@@ -422,6 +588,79 @@ export default {
           </div>
         </div>
       </teleport>
+
+      <!-- Instance gear modal -->
+      <teleport to="body">
+        <div v-if="archiveModal.show && archiveModal.phase === 'summary'"
+          style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px"
+          @mousedown.self="closeArchiveModal">
+          <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:100%;max-width:440px;overflow:hidden">
+            <div style="padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
+              <div>
+                <div class="kicker">Instance</div>
+                <div class="fw-600 text-0" style="font-size:15px">{{ archiveModal.instance }}</div>
+              </div>
+              <button class="icon-btn" @click="closeArchiveModal"><span v-html="icon('x',13)"></span></button>
+            </div>
+            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:0">
+              <div class="danger-zone">
+                <div class="danger-zone-label">Danger Zone</div>
+
+                <!-- Archive (with zip) -->
+                <div style="margin-bottom:8px">
+                  <template v-if="archiveConfirm === 'archive'">
+                    <div class="fs-12 text-1" style="margin-bottom:6px">This will sync, zip, and remove the instance from Prism. Continue?</div>
+                    <div class="flex items-center gap-6">
+                      <button class="btn-danger" @click="archiveModal.moveOnly = false; confirmArchive()">Confirm Archive</button>
+                      <button class="btn btn-ghost btn-sm" @click="archiveConfirm = null">Cancel</button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <button class="btn-danger" @click="archiveConfirm = 'archive'">
+                      <span v-html="icon('archive',12)"></span> Archive
+                    </button>
+                    <div class="fs-11 text-3" style="margin-top:4px">Sync + create zip backup + remove from Prism</div>
+                  </template>
+                </div>
+
+                <!-- Archive Move Only -->
+                <div>
+                  <template v-if="archiveConfirm === 'move_only'">
+                    <div class="fs-12" style="color:var(--err);margin-bottom:6px">⚠ Warning: No zip backup — cannot recover if sync folder is lost.</div>
+                    <div class="flex items-center gap-6">
+                      <button class="btn-danger" @click="archiveModal.moveOnly = true; confirmArchive()">Yes, move only</button>
+                      <button class="btn btn-ghost btn-sm" @click="archiveConfirm = null">Cancel</button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <button class="btn-danger" @click="archiveConfirm = 'move_only'">
+                      <span v-html="icon('archive',12)"></span> Archive (Move only)
+                    </button>
+                    <div class="fs-11 text-3" style="margin-top:4px">Sync + remove from Prism — no zip backup</div>
+                  </template>
+                </div>
+
+              </div>
+            </div>
+            <div style="padding:16px 24px;border-top:1px solid var(--line);display:flex;justify-content:flex-end">
+              <button class="btn btn-ghost btn-sm" @click="closeArchiveModal">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </teleport>
+
+      <!-- Archive progress modal -->
+      <action-modal
+        :show="archiveModal.show && archiveModal.phase === 'progress'"
+        :title="'Archiving ' + (archiveModal.instance || '')"
+        phase="progress"
+        :steps="archiveModal.steps"
+        :logs="archiveModal.logs"
+        :done="archiveModal.done"
+        :error="archiveModal.error"
+        @cancel="closeArchiveModal"
+        @retry="confirmArchive"
+      />
     </main>
   `
 }

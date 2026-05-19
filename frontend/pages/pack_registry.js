@@ -1,4 +1,4 @@
-import { ref, onMounted, computed, watch } from '../vue.esm-browser.js'
+import { ref, onMounted, onUnmounted, computed, watch } from '../vue.esm-browser.js'
 import ActionModal from '../components/action-modal.js'
 
 const PUBLISH_STEPS = ['Build zip', 'Upload pack', 'Upload metadata']
@@ -14,21 +14,23 @@ export default {
     const installedInstances = ref([])
     const instancesLoading = ref(false)
     const preparingInstall = ref(false)  // true while fetching metadata before modal opens
+    let _mounted = true
+    onUnmounted(() => { _mounted = false })
     const loadInstalledInstances = async () => {
       instancesLoading.value = true
       try {
         await window.__apiReady
-        installedInstances.value = await window.pywebview.api.get_installed_instances()
+        if (_mounted) installedInstances.value = await window.pywebview.api.get_installed_instances()
       } catch(e) {
-        installedInstances.value = []
+        if (_mounted) installedInstances.value = []
       }
-      instancesLoading.value = false
+      if (_mounted) instancesLoading.value = false
       // Fetch update status in background — never blocks or resets the table
       try {
         const updates = await window.pywebview.api.get_instance_update_status()
         const map = {}
         updates.forEach(u => { map[u.instance_name] = u })
-        installedInstances.value = installedInstances.value.map(inst => ({
+        if (_mounted) installedInstances.value = installedInstances.value.map(inst => ({
           ...inst,
           ...(map[inst.instance_name] || {}),
         }))
@@ -703,7 +705,7 @@ export default {
 
     // Progress handler — routes to publish or install steps based on active tab
     const _baseHandler = window.__onProgress
-    window.__onProgress = (event) => {
+    const _packHandler = (event) => {
       if (_baseHandler) _baseHandler(event)
 
       if (event.type === 'server_pack_progress') {
@@ -738,6 +740,8 @@ export default {
         return
       }
     }
+    window.__onProgress = _packHandler
+    onUnmounted(() => { window.__onProgress = _baseHandler })
 
     onMounted(async () => {
       await loadRepos()

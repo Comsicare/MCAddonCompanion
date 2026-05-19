@@ -53,6 +53,29 @@ def _file_stat(path: Path) -> dict:
     stat = path.stat()
     return {"mtime": stat.st_mtime, "size": stat.st_size}
 
+
+def read_last_result(sync_instance_dir: Path) -> dict:
+    """Read last_result.json from sync folder. Returns {} if missing or corrupt."""
+    p = sync_instance_dir / "last_result.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        log.warning("last_result.json corrupt at %s: %s", p, e)
+        return {}
+
+
+def write_last_result(sync_instance_dir: Path, result: dict) -> None:
+    """Write last_result.json alongside manifest.json. Best-effort — never raises."""
+    try:
+        sync_instance_dir.mkdir(parents=True, exist_ok=True)
+        (sync_instance_dir / "last_result.json").write_text(
+            json.dumps(result, indent=2), encoding="utf-8"
+        )
+    except Exception as e:
+        log.warning("Could not write last_result.json at %s: %s", sync_instance_dir, e)
+
 # ---------------------------------------------------------------------------
 # Exit sync
 # ---------------------------------------------------------------------------
@@ -70,7 +93,7 @@ def run_exit_sync(
     Updates manifest.json. Returns stats dict.
     on_progress: optional callable(copied, total) called after each file copy.
     """
-    copied = skipped = pruned = 0
+    copied = skipped = pruned = unchanged = 0
     errors = []
     old_manifest = read_manifest(sync_instance_dir)
     new_manifest = {}
@@ -90,6 +113,15 @@ def run_exit_sync(
     for src, rel in to_copy:
         dest = sync_instance_dir / rel
         try:
+            src_stat = src.stat()
+            recorded = old_manifest.get(rel)
+            if (recorded
+                    and dest.exists()
+                    and abs(src_stat.st_mtime - recorded["mtime"]) < 1.0
+                    and src_stat.st_size == recorded["size"]):
+                new_manifest[rel] = recorded
+                unchanged += 1
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(src), str(dest))
             new_manifest[rel] = _file_stat(dest)
@@ -97,7 +129,7 @@ def run_exit_sync(
         except Exception as e:
             errors.append(f"{rel}: {e}")
         if on_progress:
-            on_progress(copied, total)
+            on_progress(copied + unchanged, total)
 
     # Prune stale files from sync folder (deleted from instance since last sync)
     for stale_rel in set(old_manifest) - set(new_manifest):
@@ -114,7 +146,17 @@ def run_exit_sync(
     except Exception as e:
         errors.append(f"manifest write: {e}")
 
-    return {"copied": copied, "skipped": skipped, "pruned": pruned, "errors": errors}
+    write_last_result(sync_instance_dir, {
+        "mode": "exit",
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "copied": copied,
+        "skipped": skipped,
+        "pruned": pruned,
+        "unchanged": unchanged,
+        "errors": errors,
+    })
+
+    return {"copied": copied, "skipped": skipped, "pruned": pruned, "unchanged": unchanged, "errors": errors}
 
 # ---------------------------------------------------------------------------
 # Changelog
@@ -200,5 +242,14 @@ def run_startup_sync(
             errors.append(f"{rel}: {e}")
         if on_progress:
             on_progress(restored + skipped, total)
+
+    write_last_result(sync_instance_dir, {
+        "mode": "startup",
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "restored": restored,
+        "skipped": skipped,
+        "backed_up": backed_up,
+        "errors": errors,
+    })
 
     return {"restored": restored, "skipped": skipped, "backed_up": backed_up, "errors": errors}

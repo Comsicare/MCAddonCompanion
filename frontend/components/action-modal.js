@@ -66,7 +66,7 @@ export default {
               </div>
               <div v-if="s.state === 'run' && s.pct !== null"
                 style="margin:2px 0 6px 28px;height:4px;background:var(--bg-0);border-radius:2px;overflow:hidden">
-                <div :style="'width:' + s.pct + '%;height:100%;background:var(--accent);border-radius:2px;transition:width .15s linear'"></div>
+                <div :style="'width:' + s.pct + '%;height:100%;background:var(--accent);border-radius:2px;transition:width .4s ease-out'"></div>
               </div>
             </template>
             <button

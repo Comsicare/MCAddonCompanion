@@ -13,26 +13,41 @@ def _configure_logging() -> None:
     if root.handlers:
         return
     if sys.platform == "win32":
-        log_dir = pathlib.Path(os.environ.get("APPDATA", ".")) / "MCAddonCompanion"
+        log_dir = pathlib.Path(os.environ.get("LOCALAPPDATA", os.environ.get("APPDATA", "."))) / "MCAddonCompanion" / "logs"
     else:
         xdg = os.environ.get("XDG_DATA_HOME", str(pathlib.Path.home() / ".local/share"))
-        log_dir = pathlib.Path(xdg) / "MCAddonCompanion"
+        log_dir = pathlib.Path(xdg) / "MCAddonCompanion" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "mcaddoncompanion.log"
-    fh = logging.handlers.RotatingFileHandler(
-        log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"
-    )
-    fh.setFormatter(logging.Formatter(
+
+    fmt = logging.Formatter(
         "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
-    ))
+    )
+
+    fh = logging.handlers.RotatingFileHandler(
+        log_dir / "mcaddoncompanion.log",
+        maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    fh.setFormatter(fmt)
     root.setLevel(logging.DEBUG)
     root.addHandler(fh)
+
+    # JS errors go to a separate file so they don't pollute the main log
+    js_fh = logging.handlers.RotatingFileHandler(
+        log_dir / "js_errors.log",
+        maxBytes=2 * 1024 * 1024, backupCount=2, encoding="utf-8"
+    )
+    js_fh.setFormatter(fmt)
+    js_log = logging.getLogger("js")
+    js_log.addHandler(js_fh)
+    js_log.propagate = False  # don't echo JS noise into main log
+
     if not getattr(sys, "frozen", False):
         root.addHandler(logging.StreamHandler())
 
 
 _configure_logging()
+log = logging.getLogger(__name__)
 
 if not getattr(sys, "frozen", False):
     _VENV = Path(__file__).parent / "venv"
@@ -62,7 +77,7 @@ if not getattr(sys, "frozen", False):
 
 import webview
 
-from core.config import INSTANCES_DIR, VERSION, STATEFILE
+from core.config import INSTANCES_DIR, VERSION
 from core.prism import get_minecraft_dir, is_prism_running, patch_exit_commands, clear_exit_commands
 from core.state import (
     load_state, save_state,
@@ -72,8 +87,6 @@ from core.state import (
     get_repo_by_id,
     get_installed_instances, save_installed_instance,
 )
-
-log = logging.getLogger(__name__)
 
 import re as _re
 
@@ -233,105 +246,7 @@ class Api:
                 "startup_sync": eff.get("startup_sync", False),
             })
         repos = get_pack_registry_repos()
-        return {"instances": rows, "repos": repos}
-
-    def open_instances_folder(self) -> None:
-        import subprocess
-        path = INSTANCES_DIR
-        if not path.exists():
-            return
-        if sys.platform == "win32":
-            subprocess.Popen(["explorer", str(path)])
-        else:
-            # Linux/macOS: collect for future Linux compat pass
-            subprocess.Popen(["xdg-open", str(path)])
-
-    def get_instance_settings(self, instance_name: str) -> dict:
-        from core.state import get_tracked_packs
-        state = load_state()
-        autosync = state.get("schematic_sync", {}).get("autosync_instances", [])
-        hook_enabled = self.get_hook_status(instance_name)
-
-        tracked_map = {t["instance_name"]: t for t in get_tracked_packs()}
-        installed_map = {i["instance_name"]: i for i in get_installed_instances()}
-
-        cfg = get_instance_sync_config()
-        eff = get_instance_effective_settings(
-            {"defaults": cfg.get("defaults", {}), "instances": cfg.get("instances", {})},
-            instance_name
-        ) if is_instance_sync_configured() else {}
-
-        return {
-            "instance_name": instance_name,
-            "schematic_sync": instance_name in autosync,
-            "exit_sync": eff.get("exit_sync", False),
-            "startup_sync": eff.get("startup_sync", False),
-            "hook_enabled": hook_enabled,
-            "tracked": instance_name in tracked_map,
-            "installed": instance_name in installed_map,
-            "pack_name": installed_map.get(instance_name, {}).get("pack_name"),
-        }
-
-    def save_instance_settings(self, instance_name: str, settings: dict) -> dict:
-        """Apply all per-instance toggle changes atomically. Returns updated settings."""
-        # Schematic sync
-        self.set_autosync(instance_name, bool(settings.get("schematic_sync", False)))
-
-        # Instance sync hook (pre/post launch commands)
-        hook_desired = bool(settings.get("hook_enabled", False))
-        current_hook = self.get_hook_status(instance_name)
-        if hook_desired != current_hook:
-            self.set_instance_hook(instance_name, hook_desired)
-
-        # Pack tracking
-        if settings.get("installed"):
-            from core.state import add_tracked_pack, remove_tracked_pack
-            if settings.get("tracked"):
-                installed = next(
-                    (i for i in get_installed_instances() if i["instance_name"] == instance_name),
-                    None
-                )
-                if installed:
-                    add_tracked_pack({
-                        "instance_name": instance_name,
-                        "repo_id": installed["repo_id"],
-                        "pack_name": installed["pack_name"],
-                        "pack_slug": installed["pack_slug"],
-                        "installed_version": installed["installed_version"],
-                    })
-            else:
-                remove_tracked_pack(instance_name)
-
-        return self.get_instance_settings(instance_name)
-
-    def reset_module(self, module: str) -> dict:
-        """Clear state for a module. Returns {"ok": True} or {"ok": False, "error": str}."""
-        RESETABLE = {
-            "schematic_sync": lambda s: s.update({"schematic_sync": {"autosync_instances": []}}),
-            "instance_sync": lambda s: s.update({"instance_sync": {}}),
-            "pack_registry": lambda s: s.update({"pack_registry": {}, "tracked_packs": [], "installed_instances": []}),
-        }
-        if module not in RESETABLE:
-            return {"ok": False, "error": f"Unknown module: {module}"}
-        try:
-            state = load_state()
-            RESETABLE[module](state)
-            save_state(state)
-            return {"ok": True}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
-
-    def get_host_info(self) -> dict:
-        import platform
-        return {
-            "version": VERSION,
-            "python": sys.version.split()[0],
-            "platform": platform.system(),
-            "platform_version": platform.version(),
-            "instances_dir": str(INSTANCES_DIR),
-            "state_file": str(STATEFILE),
-            "frozen": getattr(sys, "frozen", False),
-        }
+        return {"instances": rows, "repos": repos, "instance_sync_configured": is_instance_sync_configured()}
 
     def sync_instance(self, name: str, mode: str) -> None:
         plan = _plan_instance(name, mode)
@@ -421,14 +336,26 @@ class Api:
             d.name for d in INSTANCES_DIR.iterdir()
             if d.is_dir() and not d.name.endswith(".tmp")
         ) if INSTANCES_DIR.exists() else []
+        from modules.instance_sync.sync import read_last_result, read_manifest
+        sync_path_str = inst_sync.get("sync_path", "")
         rows = []
         for name in all_instances:
             inst_cfg = instances_cfg.get(name, {})
+            sync_dir = Path(sync_path_str) / "instance_sync" / name if sync_path_str else None
+            last = read_last_result(sync_dir) if sync_dir else {}
+            manifest = read_manifest(sync_dir) if sync_dir else {}
+            synced_size = round(
+                sum(v.get("size", 0) for v in manifest.values()) / 1_048_576, 1
+            ) if manifest else 0.0
             rows.append({
                 "name": name,
                 "exit_sync": inst_cfg.get("exit_sync") if inst_cfg.get("exit_sync") is not None else defaults["exit_sync"],
                 "startup_sync": inst_cfg.get("startup_sync") if inst_cfg.get("startup_sync") is not None else defaults.get("startup_sync", False),
                 "enabled": inst_cfg.get("enabled", True),
+                "last_exit_sync": last.get("timestamp") if last.get("mode") == "exit" else None,
+                "last_startup_sync": last.get("timestamp") if last.get("mode") == "startup" else None,
+                "last_errors": last.get("errors", []),
+                "synced_size_mb": synced_size,
             })
         return {
             "is_configured": True,
@@ -448,57 +375,101 @@ class Api:
         return {"ok": True}
 
     def archive_instance(self, instance_name: str) -> dict:
-        """Sync instance to sync folder, create a zip backup in the instances dir, then delete the instance folder."""
-        import shutil, zipfile
-        from datetime import datetime
-        from modules.instance_sync.sync import is_blacklisted, read_manifest, write_manifest, _file_stat
+        """Kick off archive (sync + zip + delete) in a background thread. Emits archive_done progress event."""
+        import threading
 
-        cfg = get_instance_sync_config()
-        instances_path = Path(cfg.get("instances_path") or str(INSTANCES_DIR))
-        sync_path = Path(cfg.get("sync_path") or "")
-        if not sync_path:
-            return {"ok": False, "error": "Sync path not configured."}
+        def _run():
+            import shutil, zipfile, time
+            from modules.instance_sync.sync import is_blacklisted, write_manifest, _file_stat
+            try:
+                t0 = time.monotonic()
+                cfg = get_instance_sync_config()
+                instances_path = Path(cfg.get("instances_path") or str(INSTANCES_DIR))
+                sync_path = Path(cfg.get("sync_path") or "")
+                if not sync_path:
+                    self._emit_archive_done(False, "Sync path not configured.")
+                    return
+                inst_dir = instances_path / instance_name
+                if not inst_dir.exists():
+                    self._emit_archive_done(False, f"Instance folder not found: {inst_dir}")
+                    return
+                mc_dir = get_minecraft_dir(instances_path, instance_name)
+                sync_dir = sync_path / "instance_sync" / instance_name
+                files_copied = 0
+                synced_bytes = 0
+                def _log(line):
+                    self._emit_archive_event({"type": "archive_log", "line": line})
+                def _secs(t): return f"{time.monotonic() - t:.1f}s"
 
-        inst_dir = instances_path / instance_name
-        if not inst_dir.exists():
-            return {"ok": False, "error": f"Instance folder not found: {inst_dir}"}
-
-        mc_dir = get_minecraft_dir(instances_path, instance_name)
-
-        # 1. Sync to sync folder (same logic as exit sync)
-        sync_dir = sync_path / "instance_sync" / instance_name
-        if mc_dir:
-            all_files = [(src, src.relative_to(mc_dir).as_posix())
-                         for src in mc_dir.rglob("*") if src.is_file()]
-            to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
-            sync_dir.mkdir(parents=True, exist_ok=True)
-            new_manifest = {}
-            for src, rel in to_copy:
-                dest = sync_dir / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(src), str(dest))
-                new_manifest[rel] = _file_stat(dest)
-            write_manifest(sync_dir, new_manifest)
-
-        # 2. Create zip backup of entire instance folder inside instances dir
-        zip_name = f"{instance_name}.archive.zip"
-        zip_path = instances_path / zip_name
-        try:
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for f in inst_dir.rglob("*"):
-                    if f.is_file():
+                if mc_dir:
+                    all_files = [(src, src.relative_to(mc_dir).as_posix())
+                                 for src in mc_dir.rglob("*") if src.is_file()]
+                    to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
+                    # Each archive_step carries the completed log for the PREVIOUS step atomically
+                    self._emit_archive_event({"type": "archive_step", "step": "Reading files…", "pct": 0})
+                    t_read = time.monotonic()
+                    total_bytes = sum(s.stat().st_size for s, _ in to_copy) or 1
+                    log_read = f"Reading files...  {len(to_copy)} files  ({round(total_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_read)}]"
+                    self._emit_archive_event({"type": "archive_step", "step": "Copying files…", "pct": 0, "prev_log": log_read})
+                    t_copy = time.monotonic()
+                    sync_dir.mkdir(parents=True, exist_ok=True)
+                    new_manifest = {}
+                    copied_bytes = 0
+                    last_pct = 0
+                    for src, rel in to_copy:
+                        dest = sync_dir / rel
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(str(src), str(dest))
+                        stat = _file_stat(dest)
+                        new_manifest[rel] = stat
+                        fsize = stat.get("size", 0)
+                        synced_bytes += fsize
+                        copied_bytes += fsize
+                        files_copied += 1
+                        pct = min(99, int(copied_bytes / total_bytes * 100))
+                        if pct >= last_pct + 1 or pct == 99:
+                            self._emit_archive_event({"type": "archive_progress", "pct": pct})
+                            last_pct = pct
+                    write_manifest(sync_dir, new_manifest)
+                    log_copy = f"Copying files...  {files_copied} files  ({round(synced_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_copy)}]"
+                else:
+                    log_copy = None
+                zip_name = f"{instance_name}.archive.zip"
+                zip_path = instances_path / zip_name
+                self._emit_archive_event({"type": "archive_step", "step": "Creating zip archive…", "pct": 0, "prev_log": log_copy})
+                t_zip = time.monotonic()
+                zip_files = [f for f in inst_dir.rglob("*") if f.is_file()]
+                total_zip_bytes = sum(f.stat().st_size for f in zip_files) or 1
+                zipped_bytes = 0
+                last_pct = 0
+                with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for f in zip_files:
                         zf.write(f, f.relative_to(instances_path))
-        except Exception as e:
-            return {"ok": False, "error": f"Zip creation failed: {e}"}
+                        zipped_bytes += f.stat().st_size
+                        pct = min(99, int(zipped_bytes / total_zip_bytes * 100))
+                        if pct >= last_pct + 1 or pct == 99:
+                            self._emit_archive_event({"type": "archive_progress", "pct": pct})
+                            last_pct = pct
+                zip_size_mb = round(zip_path.stat().st_size / 1024 / 1024, 1) if zip_path.exists() else 0
+                log_zip = f"Creating zip archive...  {zip_size_mb} MB  [{_secs(t_zip)}]"
+                self._emit_archive_event({"type": "archive_step", "step": "Removing instance folder…", "prev_log": log_zip})
+                t_rm = time.monotonic()
+                shutil.rmtree(str(inst_dir))
+                log.info("Archived instance %r to %s", instance_name, zip_path)
+                summary_logs = [
+                    f"Removing instance folder...  [{_secs(t_rm)}]",
+                    f"",
+                    f"Synced size: {round(synced_bytes / 1024 / 1024, 1)} MB",
+                    f"Zip size:    {zip_size_mb} MB",
+                    f"Destination: {sync_dir}",
+                ]
+                self._emit_archive_done(True, None, summary_logs)
+            except Exception as e:
+                log.error("archive_instance failed for %r: %s", instance_name, e)
+                self._emit_archive_done(False, str(e))
 
-        # 3. Remove instance folder
-        try:
-            shutil.rmtree(str(inst_dir))
-        except Exception as e:
-            return {"ok": False, "error": f"Could not remove instance folder: {e}"}
-
-        log.info("Archived instance %r → %s", instance_name, zip_path)
-        return {"ok": True, "zip_path": str(zip_path)}
+        threading.Thread(target=_run, daemon=True).start()
+        return {"ok": True, "started": True}
 
     def get_archived_instances(self) -> list:
         """Return list of archived instances (zip files in instances dir)."""
@@ -565,6 +536,386 @@ class Api:
             zip_path.unlink()
             return {"ok": True}
         return {"ok": False, "error": "Zip not found."}
+
+    def get_instance_detail(self, instance_name: str) -> dict:
+        """Return sync detail and pack info for one instance. All reads are local — no network."""
+        from modules.instance_sync.sync import read_last_result, read_manifest
+        from core.state import get_tracked_packs
+
+        cfg = get_instance_sync_config()
+        sync_path = cfg.get("sync_path") or ""
+        result = {
+            "last_exit_sync": None,
+            "last_startup_sync": None,
+            "synced_file_count": 0,
+            "synced_size_mb": 0.0,
+            "last_exit_errors": [],
+            "last_startup_errors": [],
+            "instance_folder_size_mb": None,
+            "pack": None,
+        }
+
+        if sync_path and is_instance_sync_configured():
+            sync_dir = Path(sync_path) / "instance_sync" / instance_name
+            last = read_last_result(sync_dir)
+            if last.get("mode") == "exit":
+                result["last_exit_sync"] = last.get("timestamp")
+                result["last_exit_errors"] = last.get("errors", [])
+            elif last.get("mode") == "startup":
+                result["last_startup_sync"] = last.get("timestamp")
+                result["last_startup_errors"] = last.get("errors", [])
+
+            manifest = read_manifest(sync_dir)
+            result["synced_file_count"] = len(manifest)
+            result["synced_size_mb"] = round(
+                sum(v.get("size", 0) for v in manifest.values()) / 1_048_576, 1
+            )
+
+        inst_dir = INSTANCES_DIR / instance_name
+        if inst_dir.exists():
+            try:
+                total = sum(f.stat().st_size for f in inst_dir.rglob("*") if f.is_file())
+                result["instance_folder_size_mb"] = round(total / 1_048_576, 1)
+            except Exception:
+                pass
+
+        from core.state import get_installed_instances as _get_inst
+        installed_map = {i["instance_name"]: i for i in _get_inst()}
+        tracked_map = {t["instance_name"]: t for t in get_tracked_packs()}
+        inst_record = installed_map.get(instance_name)
+        if inst_record:
+            tracked = tracked_map.get(instance_name)
+            result["pack"] = {
+                "name": inst_record.get("pack_name"),
+                "installed_version": inst_record.get("installed_version"),
+                "tracked": tracked is not None,
+                "has_update": False,
+                "latest_version": None,
+            }
+
+        return result
+
+    def archive_instance_move_only(self, instance_name: str) -> dict:
+        """Kick off move-only archive (sync + delete, no zip) in a background thread. Emits archive_done event."""
+        import threading
+
+        def _run():
+            import shutil, time
+            from modules.instance_sync.sync import is_blacklisted, write_manifest, _file_stat
+            try:
+                t0 = time.monotonic()
+                cfg = get_instance_sync_config()
+                instances_path = Path(cfg.get("instances_path") or str(INSTANCES_DIR))
+                sync_path = Path(cfg.get("sync_path") or "")
+                if not sync_path:
+                    self._emit_archive_done(False, "Sync path not configured.")
+                    return
+                inst_dir = instances_path / instance_name
+                if not inst_dir.exists():
+                    self._emit_archive_done(False, f"Instance folder not found: {inst_dir}")
+                    return
+                mc_dir = get_minecraft_dir(instances_path, instance_name)
+                sync_dir = sync_path / "instance_sync" / instance_name
+                files_copied = 0
+                synced_bytes = 0
+                def _log(line):
+                    self._emit_archive_event({"type": "archive_log", "line": line})
+                def _secs(t): return f"{time.monotonic() - t:.1f}s"
+
+                if mc_dir:
+                    all_files = [(src, src.relative_to(mc_dir).as_posix())
+                                 for src in mc_dir.rglob("*") if src.is_file()]
+                    to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
+                    self._emit_archive_event({"type": "archive_step", "step": "Reading files…", "pct": 0})
+                    t_read = time.monotonic()
+                    total_bytes = sum(s.stat().st_size for s, _ in to_copy) or 1
+                    log_read = f"Reading files...  {len(to_copy)} files  ({round(total_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_read)}]"
+                    self._emit_archive_event({"type": "archive_step", "step": "Moving files…", "pct": 0, "prev_log": log_read})
+                    t_move = time.monotonic()
+                    sync_dir.mkdir(parents=True, exist_ok=True)
+                    new_manifest = {}
+                    copied_bytes = 0
+                    last_pct = 0
+                    for src, rel in to_copy:
+                        dest = sync_dir / rel
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(str(src), str(dest))
+                        stat = _file_stat(dest)
+                        new_manifest[rel] = stat
+                        fsize = stat.get("size", 0)
+                        synced_bytes += fsize
+                        copied_bytes += fsize
+                        files_copied += 1
+                        pct = min(99, int(copied_bytes / total_bytes * 100))
+                        if pct >= last_pct + 1 or pct == 99:
+                            self._emit_archive_event({"type": "archive_progress", "pct": pct})
+                            last_pct = pct
+                    write_manifest(sync_dir, new_manifest)
+                    log_move = f"Moving files...  {files_copied} files  ({round(synced_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_move)}]"
+                else:
+                    log_move = None
+                self._emit_archive_event({"type": "archive_step", "step": "Removing instance folder…", "prev_log": log_move})
+                t_rm = time.monotonic()
+                shutil.rmtree(str(inst_dir))
+                log.info("Move-only archived instance %r (no zip)", instance_name)
+                summary_logs = [
+                    f"Removing instance folder...  [{_secs(t_rm)}]",
+                    f"",
+                    f"Synced size: {round(synced_bytes / 1024 / 1024, 1)} MB",
+                    f"Destination: {sync_dir}",
+                ]
+                self._emit_archive_done(True, None, summary_logs)
+            except Exception as e:
+                log.error("archive_instance_move_only failed for %r: %s", instance_name, e)
+                self._emit_archive_done(False, str(e))
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"ok": True, "started": True}
+
+    def _emit_archive_event(self, payload: dict) -> None:
+        self._emit(payload)
+
+    def _emit_archive_done(self, ok: bool, error: str | None, logs: list | None = None) -> None:
+        payload = {"type": "archive_done", "ok": ok}
+        if error:
+            payload["error"] = error
+        if logs:
+            payload["logs"] = logs
+        self._emit_archive_event(payload)
+
+    def get_update_stream_api(self) -> str:
+        from core.state import get_update_stream
+        return get_update_stream()
+
+    def set_update_stream_api(self, stream: str) -> dict:
+        from core.state import set_update_stream, VALID_STREAMS
+        if stream not in VALID_STREAMS:
+            return {"ok": False, "error": f"Invalid stream: {stream}"}
+        try:
+            set_update_stream(stream)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def get_gitlab_pat_api(self) -> str:
+        from core.state import get_gitlab_pat
+        return get_gitlab_pat() or ""
+
+    def set_gitlab_pat_api(self, pat: str) -> None:
+        from core.state import set_gitlab_pat
+        set_gitlab_pat(pat.strip())
+
+    def get_host_info(self) -> dict:
+        import platform
+        from core.config import VERSION, INSTANCES_DIR, STATEFILE
+        return {
+            "version": VERSION,
+            "python": sys.version.split()[0],
+            "platform": sys.platform,
+            "platform_version": platform.version(),
+            "instances_dir": str(INSTANCES_DIR),
+            "state_file": str(STATEFILE),
+            "frozen": getattr(sys, "frozen", False),
+        }
+
+    def open_instances_folder(self) -> None:
+        from core.config import INSTANCES_DIR
+        import subprocess
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", str(INSTANCES_DIR)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(INSTANCES_DIR)])
+            else:
+                subprocess.Popen(["xdg-open", str(INSTANCES_DIR)])
+        except Exception as e:
+            log.error("open_instances_folder failed: %s", e)
+
+    def reset_module(self, module: str) -> dict:
+        valid = {"schematic_sync", "instance_sync", "pack_registry"}
+        if module not in valid:
+            return {"ok": False, "error": f"Unknown module: {module}"}
+        try:
+            state = load_state()
+            state.pop(module, None)
+            save_state(state)
+            log.info("reset_module: cleared state for %s", module)
+            return {"ok": True}
+        except Exception as e:
+            log.error("reset_module failed for %s: %s", module, e)
+            return {"ok": False, "error": str(e)}
+
+    def get_instance_settings(self, instance_name: str) -> dict:
+        from core.state import load_state
+        state = load_state()
+
+        # Instance sync toggles (dict keyed by name)
+        is_cfg = state.get("instance_sync", {})
+        inst = is_cfg.get("instances", {}).get(instance_name, {})
+
+        # Schematic sync (list of name strings)
+        sc_autosync = state.get("schematic_sync", {}).get("autosync_instances", [])
+        schematic_sync = instance_name in sc_autosync
+
+        # Tracked packs (list of dicts)
+        tracked_packs = state.get("tracked_packs", [])
+        tracked = any(t.get("instance_name") == instance_name for t in tracked_packs)
+
+        # Installed instances (list of dicts)
+        installed_instances = state.get("installed_instances", [])
+        inst_installed = next((i for i in installed_instances if i.get("instance_name") == instance_name), None)
+        pack_name = inst_installed.get("pack_name") if inst_installed else None
+
+        return {
+            "schematic_sync": schematic_sync,
+            "exit_sync": bool(inst.get("exit_sync", False)),
+            "startup_sync": bool(inst.get("startup_sync", False)),
+            "hook_enabled": bool(inst.get("hook_enabled", False)),
+            "tracked": tracked,
+            "installed": inst_installed is not None,
+            "pack_name": pack_name,
+        }
+
+    def save_instance_settings(self, instance_name: str, settings: dict) -> dict:
+        from core.state import load_state, save_state
+        from core.config import INSTANCES_DIR
+        from core.prism import patch_exit_commands, clear_exit_commands
+        try:
+            state = load_state()
+
+            # Schematic sync — list of name strings
+            sc_cfg = state.setdefault("schematic_sync", {})
+            sc_autosync = sc_cfg.setdefault("autosync_instances", [])
+            if settings.get("schematic_sync"):
+                if instance_name not in sc_autosync:
+                    sc_autosync.append(instance_name)
+            else:
+                if instance_name in sc_autosync:
+                    sc_autosync.remove(instance_name)
+
+            # Instance sync toggles (dict keyed by name)
+            is_cfg = state.setdefault("instance_sync", {})
+            instances = is_cfg.setdefault("instances", {})
+            inst = instances.setdefault(instance_name, {})
+            inst["exit_sync"] = bool(settings.get("exit_sync", False))
+            inst["startup_sync"] = bool(settings.get("startup_sync", False))
+
+            # Hook
+            hook_enabled = bool(settings.get("hook_enabled", False))
+            inst["hook_enabled"] = hook_enabled
+            main_script = Path(__file__).resolve()
+            if hook_enabled:
+                patch_exit_commands([instance_name], main_script, INSTANCES_DIR)
+            else:
+                clear_exit_commands([instance_name], INSTANCES_DIR)
+
+            # Track for updates — list of dicts
+            tracked_packs = state.setdefault("tracked_packs", [])
+            installed_instances = state.get("installed_instances", [])
+            already_tracked = next((i for i, t in enumerate(tracked_packs) if t.get("instance_name") == instance_name), None)
+            if settings.get("tracked"):
+                inst_info = next((i for i in installed_instances if i.get("instance_name") == instance_name), None)
+                if inst_info and already_tracked is None:
+                    tracked_packs.append(inst_info)
+            else:
+                if already_tracked is not None:
+                    tracked_packs.pop(already_tracked)
+
+            save_state(state)
+            log.info("save_instance_settings: saved settings for %s", instance_name)
+            return self.get_instance_settings(instance_name)
+        except Exception as e:
+            log.error("save_instance_settings failed for %s: %s", instance_name, e)
+            return {"error": str(e)}
+
+    def log_js_error(self, level: str, message: str) -> None:
+        js_log = logging.getLogger("js")
+        lvl = {
+            "debug": logging.DEBUG,
+            "info": logging.INFO,
+            "warning": logging.WARNING,
+            "error": logging.ERROR,
+        }.get(str(level).lower(), logging.ERROR)
+        js_log.log(lvl, message)
+
+
+
+    def create_debug_dump(self) -> dict:
+        import zipfile
+        import json as _json
+        from datetime import datetime
+
+        try:
+            if sys.platform == "win32":
+                log_dir = pathlib.Path(os.environ.get("LOCALAPPDATA", os.environ.get("APPDATA", "."))) / "MCAddonCompanion" / "logs"
+                state_path = pathlib.Path(os.environ.get("APPDATA", ".")) / "MCAddonCompanion" / "state.json"
+            else:
+                xdg = os.environ.get("XDG_DATA_HOME", str(pathlib.Path.home() / ".local/share"))
+                log_dir = pathlib.Path(xdg) / "MCAddonCompanion" / "logs"
+                state_path = log_dir.parent / "state.json"
+
+            # Dev mode: prefer local state.json next to main.py
+            local_state = Path(__file__).parent / "state.json"
+            if local_state.exists():
+                state_path = local_state
+
+            downloads = Path.home() / "Downloads"
+            downloads.mkdir(exist_ok=True)
+            ts = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+            zip_name = f"mcaddoncompanion-debug-{ts}.zip"
+            zip_path = downloads / zip_name
+
+            def _redact(obj):
+                if isinstance(obj, dict):
+                    return {
+                        k: "***" if any(s in k.lower() for s in ("pat", "token", "secret", "password"))
+                        else _redact(v)
+                        for k, v in obj.items()
+                    }
+                if isinstance(obj, list):
+                    return [_redact(i) for i in obj]
+                return obj
+
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                # Logs
+                if log_dir.exists():
+                    for f in log_dir.iterdir():
+                        if f.is_file():
+                            zf.write(f, f"logs/{f.name}")
+
+                # Redacted state
+                if state_path.exists():
+                    try:
+                        raw = _json.loads(state_path.read_text(encoding="utf-8"))
+                        redacted = _redact(raw)
+                        zf.writestr("state_redacted.json", _json.dumps(redacted, indent=2))
+                    except Exception as e:
+                        zf.writestr("state_redacted.json", _json.dumps({"error": str(e)}))
+
+                # System info
+                info = self.get_host_info()
+                info["dump_timestamp"] = datetime.now().isoformat()
+                zf.writestr("system_info.json", _json.dumps(info, indent=2))
+
+            log.info("Debug dump created: %s", zip_path)
+
+            # Open Downloads folder
+            try:
+                import subprocess
+                if sys.platform == "win32":
+                    subprocess.Popen(["explorer", str(downloads)])
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", str(downloads)])
+                else:
+                    subprocess.Popen(["xdg-open", str(downloads)])
+            except Exception as e:
+                log.warning("Could not open Downloads folder: %s", e)
+
+            return {"ok": True, "filename": zip_name}
+
+        except Exception as e:
+            log.error("create_debug_dump failed: %s", e)
+            return {"ok": False, "error": str(e)}
 
     def set_instance_default(self, key: str, value: bool) -> None:
         state = load_state()
