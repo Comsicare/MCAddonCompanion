@@ -99,6 +99,8 @@ const App = {
     const version = ref('')
     const updateInfo = ref(null)
     const updateDismissed = ref(false)
+    const showUpdateModal = ref(false)
+    const updateAutoShown = ref(false)
     const appUpdateState = ref(null)  // null | {state:'downloading'|'installing'|'done'|'error', pct:0-100}
 
     window.__onProgress = (event) => {
@@ -114,7 +116,21 @@ const App = {
       try {
         version.value = await window.pywebview.api.get_version()
         const info = await window.pywebview.api.check_update()
-        if (info) updateInfo.value = info
+        if (info) {
+          updateInfo.value = info
+          try {
+            const skipped = await window.pywebview.api.get_skipped_version()
+            if (skipped !== info.version && !updateAutoShown.value) {
+              showUpdateModal.value = true
+              updateAutoShown.value = true
+            }
+          } catch(e) {
+            if (!updateAutoShown.value) {
+              showUpdateModal.value = true
+              updateAutoShown.value = true
+            }
+          }
+        }
       } catch(e) { console.warn('API not ready:', e) }
     })
 
@@ -125,6 +141,30 @@ const App = {
         updateInfo.value.download_url,
         updateInfo.value._pat || null,
       )
+    }
+
+    const dismissUpdate = () => {
+      updateDismissed.value = true
+      showUpdateModal.value = false
+    }
+
+    const skipUpdate = async () => {
+      if (!updateInfo.value) return
+      try {
+        await window.__apiReady
+        await window.pywebview.api.skip_update_version(updateInfo.value.version)
+      } catch(e) {}
+      updateDismissed.value = true
+      showUpdateModal.value = false
+    }
+
+    const startUpdateFromModal = async () => {
+      showUpdateModal.value = false
+      await startUpdate()
+    }
+
+    const openUpdateModal = () => {
+      showUpdateModal.value = true
     }
 
     // Menu — close on outside click via document listener (no overlay that blocks menu items)
@@ -232,7 +272,7 @@ const App = {
       } catch(e) { hostInfo.value = null }
     }
 
-    return { page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate, NAV, PAGES, icon, isUpdatePrompt, UpdatePromptPage, showMenu, showVersionModal, manualUpdateResult, openVersionModal, checkUpdateManual, showDebugModal, hostInfo, resetConfirm, resetResult, confirmReset, openDebugModal, updateStream, streamSaving, setStream, gitlabPat, savePat, dumpState, createDump }
+    return { page, progress, version, updateInfo, updateDismissed, appUpdateState, startUpdate, showUpdateModal, updateAutoShown, dismissUpdate, skipUpdate, startUpdateFromModal, openUpdateModal, NAV, PAGES, icon, isUpdatePrompt, UpdatePromptPage, showMenu, showVersionModal, manualUpdateResult, openVersionModal, checkUpdateManual, showDebugModal, hostInfo, resetConfirm, resetResult, confirmReset, openDebugModal, updateStream, streamSaving, setStream, gitlabPat, savePat, dumpState, createDump }
   },
   template: `
     <template v-if="isUpdatePrompt">
@@ -269,12 +309,12 @@ const App = {
               <span class="fs-12 fw-500" style="color:var(--accent)">{{ updateInfo.label }} v{{ updateInfo.version }}</span>
               <button class="btn btn-primary btn-sm" style="font-size:11px;padding:3px 10px"
                 :disabled="!!appUpdateState"
-                @click="startUpdate">
+                @click="appUpdateState ? null : openUpdateModal()">
                 <span v-if="appUpdateState && appUpdateState.state==='downloading'" class="spin" v-html="icon('spin',11)"></span>
                 <span v-else v-html="icon('download',11)"></span>
                 {{ appUpdateState ? (appUpdateState.state === 'downloading' ? appUpdateState.pct + '%' : appUpdateState.state) : 'Update' }}
               </button>
-              <button v-if="!appUpdateState" class="icon-btn" style="color:var(--text-3)" @click="updateDismissed = true">
+              <button v-if="!appUpdateState" class="icon-btn" style="color:var(--text-3)" @click="dismissUpdate">
                 <span v-html="icon('x', 11)"></span>
               </button>
             </div>
@@ -434,6 +474,53 @@ const App = {
                 </template>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    </teleport>
+
+    <!-- Update Confirmation modal -->
+    <teleport to="body">
+      <div v-if="showUpdateModal" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:300">
+        <div style="background:var(--bg-1);border:1px solid var(--line);border-radius:12px;width:480px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line);flex:none">
+            <span class="fw-600 fs-14">Update Available</span>
+            <button class="icon-btn" @click="dismissUpdate"><span v-html="icon('x', 14)"></span></button>
+          </div>
+          <div style="padding:20px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;flex:1">
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg-2);border:1px solid var(--line);border-radius:8px">
+              <span class="mono fs-13">v{{ version }}</span>
+              <span class="text-3 fs-13">&#8594;</span>
+              <span class="mono fs-13 fw-600" style="color:var(--accent)">v{{ updateInfo && updateInfo.version }}</span>
+              <span v-if="updateInfo && updateInfo.label" class="fs-12 text-3" style="margin-left:auto">{{ updateInfo.label }}</span>
+            </div>
+            <div v-if="updateInfo && updateInfo.is_prerelease" style="display:flex;align-items:flex-start;gap:10px;padding:10px 14px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.35);border-radius:8px">
+              <span v-html="icon('alert', 15)" style="color:#f59e0b;flex:none;margin-top:1px"></span>
+              <div>
+                <div class="fs-13 fw-500" style="color:#f59e0b;margin-bottom:2px">Pre-release build</div>
+                <div class="fs-12 text-2">This is an alpha/beta build. It may contain bugs or incomplete features.</div>
+              </div>
+            </div>
+            <div v-if="updateInfo && updateInfo.changelogs && updateInfo.changelogs.length">
+              <div class="kicker" style="margin-bottom:8px">Changelog</div>
+              <div style="background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:14px">
+                <div v-for="entry in updateInfo.changelogs" :key="entry.version">
+                  <div class="mono fs-12 fw-600" style="color:var(--accent);margin-bottom:6px">v{{ entry.version }}</div>
+                  <pre style="font-family:inherit;font-size:12px;color:var(--text-2);white-space:pre-wrap;margin:0">{{ entry.body || 'No changelog provided.' }}</pre>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--line);flex:none">
+            <button class="btn btn-ghost btn-sm" @click="dismissUpdate">
+              <span v-html="icon('x', 12)"></span> Dismiss
+            </button>
+            <button class="btn btn-ghost btn-sm" style="color:var(--text-3)" @click="skipUpdate">
+              Skip this version
+            </button>
+            <button class="btn btn-primary btn-sm" :disabled="!!appUpdateState" @click="startUpdateFromModal">
+              <span v-html="icon('download', 12)"></span> Update
+            </button>
           </div>
         </div>
       </div>

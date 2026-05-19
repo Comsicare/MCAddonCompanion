@@ -47,7 +47,7 @@ BLACKLIST_DEFAULTS = [
     "instance.cfg",
 ]
 
-VERSION = "0.3.0-alpha"
+VERSION = "0.3.1-alpha"
 GITHUB_REPO = "Comsicare/MCAddonCompanion"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
 

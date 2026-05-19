@@ -106,6 +106,9 @@ def _check_github(stream: str) -> dict | None:
     with urllib.request.urlopen(req, timeout=10) as resp:
         releases = json.loads(resp.read().decode())
 
+    best = None
+    changelogs = []
+
     for release in releases:
         if release.get("draft", False):
             continue
@@ -120,30 +123,43 @@ def _check_github(stream: str) -> dict | None:
         if not _is_newer(version, VERSION):
             continue
 
-        assets = release.get("assets", [])
-        if not assets:
-            continue
+        # This release is newer than installed and matches stream
+        if best is None:
+            best = release  # first = latest (GitHub returns newest-first)
+        changelogs.append({
+            "version": tag.lstrip("v"),  # e.g. "0.3.1-alpha"
+            "body":    release.get("body", "").strip(),
+        })
 
-        if sys.platform == "win32":
-            asset = next(
-                (a for a in assets if a["name"].endswith(".exe")),
-                assets[0],
-            )
-        else:
-            asset = next(
-                (a for a in assets if "Linux" in a["name"] and a["name"].endswith(".tar.gz")),
-                assets[0],
-            )
+    if best is None:
+        return None
 
-        return {
-            "version":      version,
-            "download_url": asset["browser_download_url"],
-            "label":        _stream_label(stream),
-            "stream":       stream,
-            "changelog":    release.get("body", "").strip(),
-        }
+    assets = best.get("assets", [])
+    if not assets:
+        return None
 
-    return None
+    if sys.platform == "win32":
+        asset = next(
+            (a for a in assets if a["name"].endswith(".exe")),
+            assets[0],
+        )
+    else:
+        asset = next(
+            (a for a in assets if "Linux" in a["name"] and a["name"].endswith(".tar.gz")),
+            assets[0],
+        )
+
+    tag = best["tag_name"]
+    is_pre = best.get("prerelease", False) or any(x in tag for x in ("alpha", "beta", "dev", "rc"))
+
+    return {
+        "version":      tag.lstrip("v").split("-")[0],
+        "download_url": asset["browser_download_url"],
+        "label":        _stream_label(stream),
+        "stream":       stream,
+        "changelogs":   changelogs,
+        "is_prerelease": is_pre,
+    }
 
 
 def _check_gitlab_dev(pat: str | None) -> dict | None:

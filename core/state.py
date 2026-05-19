@@ -209,3 +209,16 @@ def set_gitlab_pat(pat: str) -> None:
     state = load_state()
     state["gitlab_pat"] = pat
     save_state(state)
+
+
+def get_skipped_update_version() -> str | None:
+    state = load_state()
+    return state.get("skipped_update_version")
+
+def set_skipped_update_version(version: str | None) -> None:
+    state = load_state()
+    if version is None:
+        state.pop("skipped_update_version", None)
+    else:
+        state["skipped_update_version"] = version
+    save_state(state)

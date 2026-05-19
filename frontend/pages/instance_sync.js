@@ -181,9 +181,11 @@ export default {
 
       const prevHandler = window.__onProgress
       window.__onProgress = async (event) => {
+        window.pywebview.api.log_js_error('debug', '[archive] received event: ' + JSON.stringify(event))
         if (event.type === 'archive_progress') {
           const running = archiveModal.value.steps.find(s => s.state === 'run')
           if (running) running.pct = event.pct
+          window.pywebview.api.log_js_error('debug', '[archive] progress pct=' + event.pct)
         } else if (event.type === 'archive_step') {
           if (event.prev_log != null) archiveModal.value.logs = [...archiveModal.value.logs, event.prev_log]
           const steps = archiveModal.value.steps
@@ -191,6 +193,7 @@ export default {
           if (runIdx >= 0) { steps[runIdx].state = 'done'; steps[runIdx].pct = null }
           const next = steps.find(s => s.state === 'wait')
           if (next) { next.state = 'run'; next.pct = event.pct ?? 0 }
+          window.pywebview.api.log_js_error('debug', '[archive] step transition -> "' + event.step + '", prev_log appended: ' + (event.prev_log != null))
         } else if (event.type === 'archive_done') {
           window.__onProgress = prevHandler
           const steps = archiveModal.value.steps
@@ -207,6 +210,7 @@ export default {
             archiveModal.value.done = true
             archiveModal.value.error = true
           }
+          window.pywebview.api.log_js_error('debug', '[archive] done ok=' + event.ok + ', logs=' + (event.logs ? event.logs.length : 0))
         } else if (prevHandler) {
           prevHandler(event)
         }
