@@ -1757,8 +1757,9 @@ class Api:
 
     def set_deletion_choice(self, choice: str) -> None:
         self._deletion_choice = choice
-        if self._win[0]:
-            self._win[0].destroy()
+        win = self._win[0] if self._win else None
+        if win:
+            win.destroy()
 
     def pick_folder(self) -> str | None:
         import webview as _webview
