@@ -612,6 +612,111 @@ class Api:
         from core.state import set_gitlab_pat
         set_gitlab_pat(pat.strip())
 
+    def get_host_info(self) -> dict:
+        import platform
+        from core.config import VERSION, INSTANCES_DIR, STATEFILE
+        return {
+            "version": VERSION,
+            "python": sys.version.split()[0],
+            "platform": sys.platform,
+            "platform_version": platform.version(),
+            "instances_dir": str(INSTANCES_DIR),
+            "state_file": str(STATEFILE),
+            "frozen": getattr(sys, "frozen", False),
+        }
+
+    def open_instances_folder(self) -> None:
+        from core.config import INSTANCES_DIR
+        import subprocess
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", str(INSTANCES_DIR)])
+        else:
+            subprocess.Popen(["xdg-open", str(INSTANCES_DIR)])
+
+    def reset_module(self, module: str) -> dict:
+        from core.state import load_state, save_state
+        valid = {"schematic_sync", "instance_sync", "pack_registry"}
+        if module not in valid:
+            return {"ok": False, "error": f"Unknown module: {module}"}
+        try:
+            state = load_state()
+            state.pop(module, None)
+            save_state(state)
+            log.info("reset_module: cleared state for %s", module)
+            return {"ok": True}
+        except Exception as e:
+            log.error("reset_module failed for %s: %s", module, e)
+            return {"ok": False, "error": str(e)}
+
+    def get_instance_settings(self, instance_name: str) -> dict:
+        from core.state import load_state
+        state = load_state()
+        is_cfg = state.get("instance_sync", {})
+        instances = is_cfg.get("instances", {})
+        inst = instances.get(instance_name, {})
+        sc_cfg = state.get("schematic_sync", {})
+        sc_instances = sc_cfg.get("instances", {})
+        sc_inst = sc_instances.get(instance_name, {})
+        tracked = state.get("tracked_packs", {})
+        installed = state.get("installed_instances", {})
+        inst_installed = installed.get(instance_name)
+        pack_name = inst_installed.get("pack_name") if inst_installed else None
+        return {
+            "schematic_sync": bool(sc_inst.get("enabled", False)),
+            "exit_sync": bool(inst.get("exit_sync", False)),
+            "startup_sync": bool(inst.get("startup_sync", False)),
+            "hook_enabled": bool(inst.get("hook_enabled", False)),
+            "tracked": instance_name in tracked,
+            "installed": inst_installed is not None,
+            "pack_name": pack_name,
+        }
+
+    def save_instance_settings(self, instance_name: str, settings: dict) -> dict:
+        from core.state import load_state, save_state
+        from core.config import INSTANCES_DIR
+        from core.prism import patch_exit_commands, clear_exit_commands
+        try:
+            state = load_state()
+
+            # Schematic sync
+            sc_cfg = state.setdefault("schematic_sync", {})
+            sc_instances = sc_cfg.setdefault("instances", {})
+            sc_inst = sc_instances.setdefault(instance_name, {})
+            sc_inst["enabled"] = bool(settings.get("schematic_sync", False))
+
+            # Instance sync toggles
+            is_cfg = state.setdefault("instance_sync", {})
+            instances = is_cfg.setdefault("instances", {})
+            inst = instances.setdefault(instance_name, {})
+            inst["exit_sync"] = bool(settings.get("exit_sync", False))
+            inst["startup_sync"] = bool(settings.get("startup_sync", False))
+
+            # Hook
+            hook_enabled = bool(settings.get("hook_enabled", False))
+            inst["hook_enabled"] = hook_enabled
+            main_script = Path(__file__).resolve()
+            if hook_enabled:
+                patch_exit_commands([instance_name], main_script, INSTANCES_DIR)
+            else:
+                clear_exit_commands([instance_name], INSTANCES_DIR)
+
+            # Track for updates
+            tracked = state.setdefault("tracked_packs", {})
+            if settings.get("tracked"):
+                installed = state.get("installed_instances", {})
+                inst_info = installed.get(instance_name, {})
+                if inst_info:
+                    tracked[instance_name] = inst_info
+            else:
+                tracked.pop(instance_name, None)
+
+            save_state(state)
+            log.info("save_instance_settings: saved settings for %s", instance_name)
+            return self.get_instance_settings(instance_name)
+        except Exception as e:
+            log.error("save_instance_settings failed for %s: %s", instance_name, e)
+            return {"error": str(e)}
+
     def set_instance_default(self, key: str, value: bool) -> None:
         state = load_state()
         state.setdefault("instance_sync", {}).setdefault("defaults", {})[key] = value
