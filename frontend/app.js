@@ -275,10 +275,10 @@ const App = {
               <span v-html="icon('dots', 15)"></span>
             </button>
             <div v-if="showMenu" style="position:absolute;right:0;top:calc(100% + 6px);background:var(--bg-1);border:1px solid var(--line);border-radius:8px;padding:4px;min-width:180px;z-index:9998;box-shadow:0 4px 16px rgba(0,0,0,.3)">
-              <button class="menu-item" style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;background:none;border:none;color:var(--text-0);cursor:pointer;border-radius:5px;font-size:13px;text-align:left" @click="openVersionModal">
+              <button class="menu-item" style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;background:none;border:none;color:var(--text-0);cursor:pointer;border-radius:5px;font-size:13px;text-align:left" @click.stop="openVersionModal">
                 <span v-html="icon('bell', 14)"></span> Version &amp; Updates
               </button>
-              <button class="menu-item" style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;background:none;border:none;color:var(--text-0);cursor:pointer;border-radius:5px;font-size:13px;text-align:left" @click="openDebugModal">
+              <button class="menu-item" style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;background:none;border:none;color:var(--text-0);cursor:pointer;border-radius:5px;font-size:13px;text-align:left" @click.stop="openDebugModal">
                 <span v-html="icon('settings', 14)"></span> Help &amp; Debug
               </button>
             </div>
