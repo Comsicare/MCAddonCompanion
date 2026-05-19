@@ -809,12 +809,16 @@ class Api:
             log.info("Debug dump created: %s", zip_path)
 
             # Open Downloads folder
-            if sys.platform == "win32":
+            try:
                 import subprocess
-                subprocess.Popen(["explorer", str(downloads)])
-            elif sys.platform == "darwin":
-                import subprocess
-                subprocess.Popen(["open", str(downloads)])
+                if sys.platform == "win32":
+                    subprocess.Popen(["explorer", str(downloads)])
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", str(downloads)])
+                else:
+                    subprocess.Popen(["xdg-open", str(downloads)])
+            except Exception as e:
+                log.warning("Could not open Downloads folder: %s", e)
 
             return {"ok": True, "filename": zip_name}
 
