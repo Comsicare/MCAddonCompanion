@@ -1,4 +1,4 @@
-import { createApp, ref } from './vue.esm-browser.js'
+import { createApp, ref, watch } from './vue.esm-browser.js'
 import HomePage from './pages/home.js'
 import SchematicSyncPage from './pages/schematic_sync.js'
 import InstanceSyncPage from './pages/instance_sync.js'
@@ -126,8 +126,16 @@ const App = {
       )
     }
 
-    // Menu
+    // Menu — close on outside click via document listener (no overlay that blocks menu items)
     const showMenu = ref(false)
+    const _closeMenu = () => { showMenu.value = false }
+    watch(showMenu, (open) => {
+      if (open) {
+        setTimeout(() => document.addEventListener('click', _closeMenu), 0)
+      } else {
+        document.removeEventListener('click', _closeMenu)
+      }
+    })
 
     // Version & Updates modal
     const showVersionModal = ref(false)
@@ -285,8 +293,6 @@ const App = {
           </div>
         </div>
       </header>
-
-      <div v-if="showMenu" style="position:fixed;inset:0;z-index:9997" @click="showMenu = false"></div>
 
       <div class="app-content">
         <component :is="PAGES[page]" :progress="progress" @navigate="page = $event" />
