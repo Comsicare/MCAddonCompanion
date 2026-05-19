@@ -104,29 +104,31 @@ export default {
         : ['Sync files to sync folder', 'Create zip backup', 'Remove instance folder']
       archiveModal.value = {
         show: true, moveOnly, phase: 'progress', done: false, error: false,
-        steps: stepLabels.map((label, i) => ({ label, state: i === 0 ? 'run' : 'wait', pct: null, detail: '' })),
+        steps: stepLabels.map((label, i) => ({ label, state: i === 0 ? 'run' : 'wait', pct: i === 0 ? 0 : null, detail: '' })),
         logs: [],
       }
       archiveConfirm.value = null
 
       const prevHandler = window.__onProgress
       window.__onProgress = async (event) => {
-        if (event.type === 'archive_step') {
+        if (event.type === 'archive_progress') {
+          const running = archiveModal.value.steps.find(s => s.state === 'run')
+          if (running) running.pct = event.pct
+        } else if (event.type === 'archive_step') {
           const steps = archiveModal.value.steps
           const runIdx = steps.findIndex(s => s.state === 'run')
-          if (runIdx >= 0) steps[runIdx].state = 'done'
+          if (runIdx >= 0) { steps[runIdx].state = 'done'; steps[runIdx].pct = null }
           const next = steps.find(s => s.state === 'wait')
-          if (next) next.state = 'run'
+          if (next) { next.state = 'run'; next.pct = event.pct ?? 0 }
         } else if (event.type === 'archive_done') {
           window.__onProgress = prevHandler
           const steps = archiveModal.value.steps
           if (event.ok) {
             steps.forEach(s => { if (s.state !== 'done') s.state = 'done' })
+            if (event.logs) archiveModal.value.logs = event.logs
             archiveModal.value.done = true
             archiveModal.value.error = false
-            await load()
-            closeSettings()
-            closeArchiveModal()
+            load()  // refresh in background — don't await, user dismisses modal manually
           } else {
             const running = steps.find(s => s.state === 'run')
             if (running) running.state = 'err'
@@ -634,7 +636,7 @@ export default {
       :logs="archiveModal.logs"
       :done="archiveModal.done"
       :error="archiveModal.error"
-      @cancel="closeArchiveModal"
+      @cancel="closeArchiveModal(); closeSettings()"
       @retry="doArchive(settingsModal.instance, archiveModal.moveOnly)"
     />
     </main>

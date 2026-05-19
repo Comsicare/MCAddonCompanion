@@ -174,26 +174,29 @@ export default {
     const confirmArchive = async () => {
       const { instance, moveOnly } = archiveModal.value
       const stepLabels = _archiveStepLabels(moveOnly)
-      archiveModal.value.steps = stepLabels.map(label => ({ label, state: 'wait', pct: null, detail: '' }))
+      archiveModal.value.steps = stepLabels.map((label, i) => ({ label, state: i === 0 ? 'run' : 'wait', pct: i === 0 ? 0 : null, detail: '' }))
       archiveModal.value.phase = 'progress'
 
       const prevHandler = window.__onProgress
       window.__onProgress = async (event) => {
-        if (event.type === 'archive_step') {
-          // Mark previous step done, current step running
+        if (event.type === 'archive_progress') {
+          const running = archiveModal.value.steps.find(s => s.state === 'run')
+          if (running) running.pct = event.pct
+        } else if (event.type === 'archive_step') {
           const steps = archiveModal.value.steps
           const runIdx = steps.findIndex(s => s.state === 'run')
-          if (runIdx >= 0) steps[runIdx].state = 'done'
+          if (runIdx >= 0) { steps[runIdx].state = 'done'; steps[runIdx].pct = null }
           const next = steps.find(s => s.state === 'wait')
-          if (next) next.state = 'run'
+          if (next) { next.state = 'run'; next.pct = event.pct ?? 0 }
         } else if (event.type === 'archive_done') {
           window.__onProgress = prevHandler
           const steps = archiveModal.value.steps
           if (event.ok) {
             steps.forEach(s => { if (s.state !== 'done') s.state = 'done' })
+            if (event.logs) archiveModal.value.logs = event.logs
             archiveModal.value.done = true
             archiveModal.value.error = false
-            await load()
+            load()  // refresh in background
           } else {
             const running = steps.find(s => s.state === 'run')
             if (running) running.state = 'err'
