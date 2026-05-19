@@ -399,15 +399,21 @@ class Api:
                 synced_bytes = 0
                 def _log(line):
                     self._emit_archive_event({"type": "archive_log", "line": line})
+                def _log_update(line):
+                    self._emit_archive_event({"type": "archive_log_update", "line": line})
+                def _secs(t): return f"{time.monotonic() - t:.1f}s"
 
                 if mc_dir:
                     all_files = [(src, src.relative_to(mc_dir).as_posix())
                                  for src in mc_dir.rglob("*") if src.is_file()]
                     to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
                     self._emit_archive_event({"type": "archive_step", "step": "Reading files…", "pct": 0})
+                    t_read = time.monotonic()
                     total_bytes = sum(s.stat().st_size for s, _ in to_copy) or 1
-                    _log(f"Reading files...  {len(to_copy)} files  ({round(total_bytes / 1024 / 1024, 1)} MB)")
+                    _log(f"Reading files...  {len(to_copy)} files  ({round(total_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_read)}]")
                     self._emit_archive_event({"type": "archive_step", "step": "Copying files…", "pct": 0})
+                    t_copy = time.monotonic()
+                    _log(f"Copying files...")
                     sync_dir.mkdir(parents=True, exist_ok=True)
                     new_manifest = {}
                     copied_bytes = 0
@@ -427,8 +433,9 @@ class Api:
                             self._emit_archive_event({"type": "archive_progress", "pct": pct})
                             last_pct = pct
                     write_manifest(sync_dir, new_manifest)
-                    _log(f"Copying files...  done  ({files_copied} files, {round(synced_bytes / 1024 / 1024, 1)} MB)")
+                    _log_update(f"Copying files...  done  ({files_copied} files, {round(synced_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_copy)}]")
                 self._emit_archive_event({"type": "archive_step", "step": "Creating zip archive…", "pct": 0})
+                t_zip = time.monotonic()
                 _log(f"Creating zip archive...")
                 zip_name = f"{instance_name}.archive.zip"
                 zip_path = instances_path / zip_name
@@ -445,15 +452,13 @@ class Api:
                             self._emit_archive_event({"type": "archive_progress", "pct": pct})
                             last_pct = pct
                 zip_size_mb = round(zip_path.stat().st_size / 1024 / 1024, 1) if zip_path.exists() else 0
-                _log(f"Creating zip archive...  done  ({zip_size_mb} MB)")
+                _log_update(f"Creating zip archive...  done  ({zip_size_mb} MB)  [{_secs(t_zip)}]")
                 self._emit_archive_event({"type": "archive_step", "step": "Removing instance folder…"})
+                t_rm = time.monotonic()
                 _log(f"Removing instance folder...")
                 shutil.rmtree(str(inst_dir))
-                elapsed = time.monotonic() - t0
-                mins, secs = divmod(int(elapsed), 60)
-                _log(f"Removing instance folder...  done")
+                _log_update(f"Removing instance folder...  done  [{_secs(t_rm)}]")
                 _log(f"")
-                _log(f"Elapsed:     {mins:02d}:{secs:02d}")
                 _log(f"Synced size: {round(synced_bytes / 1024 / 1024, 1)} MB")
                 _log(f"Zip size:    {zip_size_mb} MB")
                 _log(f"Destination: {sync_dir}")
@@ -615,15 +620,21 @@ class Api:
                 synced_bytes = 0
                 def _log(line):
                     self._emit_archive_event({"type": "archive_log", "line": line})
+                def _log_update(line):
+                    self._emit_archive_event({"type": "archive_log_update", "line": line})
+                def _secs(t): return f"{time.monotonic() - t:.1f}s"
 
                 if mc_dir:
                     all_files = [(src, src.relative_to(mc_dir).as_posix())
                                  for src in mc_dir.rglob("*") if src.is_file()]
                     to_copy = [(src, rel) for src, rel in all_files if not is_blacklisted(rel)]
                     self._emit_archive_event({"type": "archive_step", "step": "Reading files…", "pct": 0})
+                    t_read = time.monotonic()
                     total_bytes = sum(s.stat().st_size for s, _ in to_copy) or 1
-                    _log(f"Reading files...  {len(to_copy)} files  ({round(total_bytes / 1024 / 1024, 1)} MB)")
+                    _log(f"Reading files...  {len(to_copy)} files  ({round(total_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_read)}]")
                     self._emit_archive_event({"type": "archive_step", "step": "Moving files…", "pct": 0})
+                    t_move = time.monotonic()
+                    _log(f"Moving files...")
                     sync_dir.mkdir(parents=True, exist_ok=True)
                     new_manifest = {}
                     copied_bytes = 0
@@ -643,15 +654,13 @@ class Api:
                             self._emit_archive_event({"type": "archive_progress", "pct": pct})
                             last_pct = pct
                     write_manifest(sync_dir, new_manifest)
-                    _log(f"Moving files...  done  ({files_copied} files, {round(synced_bytes / 1024 / 1024, 1)} MB)")
+                    _log_update(f"Moving files...  done  ({files_copied} files, {round(synced_bytes / 1024 / 1024, 1)} MB)  [{_secs(t_move)}]")
                 self._emit_archive_event({"type": "archive_step", "step": "Removing instance folder…"})
+                t_rm = time.monotonic()
                 _log(f"Removing instance folder...")
                 shutil.rmtree(str(inst_dir))
-                elapsed = time.monotonic() - t0
-                mins, secs = divmod(int(elapsed), 60)
-                _log(f"Removing instance folder...  done")
+                _log_update(f"Removing instance folder...  done  [{_secs(t_rm)}]")
                 _log(f"")
-                _log(f"Elapsed:     {mins:02d}:{secs:02d}")
                 _log(f"Synced size: {round(synced_bytes / 1024 / 1024, 1)} MB")
                 _log(f"Destination: {sync_dir}")
                 log.info("Move-only archived instance %r (no zip)", instance_name)
