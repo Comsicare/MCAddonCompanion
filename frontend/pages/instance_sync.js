@@ -758,19 +758,19 @@ export default {
                   </div>
                   <template v-for="entry in preflightISModal.dhEntries" :key="'warn-' + entry.path_rel">
                     <div v-if="preflightISModal.moveOnly && preflightISModal.exclusions[entry.path_rel].sync"
-                      style="padding:8px 12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.35);border-radius:6px;font-size:12px;color:#f59e0b">
+                      style="padding:8px 12px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);border-radius:6px;font-size:12px;color:#ef4444">
                       LOD data for "{{ entry.name }}" will be permanently deleted - no backup in Move Only mode.
                     </div>
                     <div v-if="!preflightISModal.moveOnly && preflightISModal.exclusions[entry.path_rel].sync && preflightISModal.exclusions[entry.path_rel].zip"
-                      style="padding:8px 12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.35);border-radius:6px;font-size:12px;color:#f59e0b">
+                      style="padding:8px 12px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);border-radius:6px;font-size:12px;color:#ef4444">
                       LOD data for "{{ entry.name }}" will be permanently deleted when the instance is removed.
                     </div>
                     <div v-if="!preflightISModal.moveOnly && !preflightISModal.exclusions[entry.path_rel].sync && preflightISModal.exclusions[entry.path_rel].zip"
-                      style="padding:8px 12px;background:rgba(0,0,0,.15);border:1px solid var(--line);border-radius:6px;font-size:12px;color:var(--text-2)">
+                      style="padding:8px 12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.35);border-radius:6px;font-size:12px;color:#f59e0b">
                       LOD data for "{{ entry.name }}" will be synced but not included in the zip backup.
                     </div>
                     <div v-if="!preflightISModal.moveOnly && preflightISModal.exclusions[entry.path_rel].sync && !preflightISModal.exclusions[entry.path_rel].zip"
-                      style="padding:8px 12px;background:rgba(0,0,0,.15);border:1px solid var(--line);border-radius:6px;font-size:12px;color:var(--text-2)">
+                      style="padding:8px 12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.35);border-radius:6px;font-size:12px;color:#f59e0b">
                       LOD data for "{{ entry.name }}" will be in the zip backup but not synced to Nextcloud.
                     </div>
                   </template>
