@@ -156,7 +156,27 @@ export default {
     const archiveModal = ref(_makeArchiveModal())
     const archiveConfirm = ref(null) // 'archive' | 'move_only' | null
 
-    const openArchiveModal = (instName, moveOnly) => {
+    const syncNowResult = ref(null)
+    const syncNowLoading = ref(false)
+    const syncNow = async () => {
+      syncNowResult.value = null
+      syncNowLoading.value = true
+      try {
+        await window.__apiReady
+        const r = await window.pywebview.api.sync_now(archiveModal.value.instance)
+        syncNowResult.value = r.ok
+          ? `Synced — ${r.copied} copied, ${r.unchanged} unchanged${r.errors && r.errors.length ? ', ' + r.errors.length + ' errors' : ''}`
+          : (r.error || 'Sync failed')
+        syncNowResult.value = { ok: r.ok, text: syncNowResult.value }
+        if (r.ok) await loadRows()
+      } catch(e) {
+        syncNowResult.value = { ok: false, text: String(e) }
+      }
+      syncNowLoading.value = false
+    }
+
+    const openArchiveModal = (instName, moveOnly = false) => {
+      syncNowResult.value = null
       archiveConfirm.value = null
       archiveModal.value = {
         show: true, instance: instName, moveOnly,
@@ -332,6 +352,7 @@ export default {
     return {
       data, loading, error, query, filtered, icon, abbr, load, toggleDefault, toggleOverride,
       showSetup, setupForm, setupSaving, setupError, openSetup, saveSetup,
+      syncNow, syncNowResult, syncNowLoading,
       archiveModal, archiveConfirm, openArchiveModal, closeArchiveModal, confirmArchive,
       preflightISModal, openPreflightIS, closePreflightIS, startArchiveFromPreflightIS,
       showRestoreModal, archivedList, selectedArchive, restoring, restoreResult,
@@ -652,7 +673,17 @@ export default {
               </div>
               <button class="icon-btn" @click="closeArchiveModal"><span v-html="icon('x',13)"></span></button>
             </div>
-            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:0">
+            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:16px">
+              <!-- Sync Now -->
+              <div>
+                <button class="btn btn-primary btn-sm flex items-center gap-6" :disabled="syncNowLoading" @click="syncNow">
+                  <span v-if="syncNowLoading" style="opacity:.6">Syncing…</span>
+                  <template v-else><span v-html="icon('refresh',12)"></span> Sync Now</template>
+                </button>
+                <div v-if="syncNowResult" class="fs-11 mono" style="margin-top:6px" :style="syncNowResult.ok ? 'color:var(--ok)' : 'color:var(--err)'">
+                  {{ syncNowResult.text }}
+                </div>
+              </div>
               <div class="danger-zone">
                 <div class="danger-zone-label">Danger Zone</div>
 

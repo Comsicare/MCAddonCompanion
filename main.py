@@ -375,6 +375,19 @@ class Api:
         repair_hooks()
         return {"ok": True}
 
+    def sync_now(self, instance_name: str) -> dict:
+        """Run an immediate exit sync for instance_name. Returns {ok, copied, errors}."""
+        from modules.instance_sync.sync import run_exit_sync
+        plan = _plan_instance(instance_name, "exit")
+        if not plan["mc_dir"] or not plan["sync_dir"]:
+            return {"ok": False, "error": "Instance Sync not configured or instance not found."}
+        try:
+            result = run_exit_sync(instance_name, plan["mc_dir"], plan["sync_dir"])
+            return {"ok": True, **result}
+        except Exception as e:
+            log.warning("sync_now failed for %r: %s", instance_name, e)
+            return {"ok": False, "error": str(e)}
+
     def get_archive_preflight(self, instance_name: str) -> dict:
         """Scan instance folder for size/file count and DistantHorizons LOD data."""
         from modules.instance_sync.sync import is_blacklisted
